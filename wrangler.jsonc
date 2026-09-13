@@ -2,12 +2,36 @@
   "name": "eco-quest",
   "main": "src/index.js",
   "compatibility_date": "2026-09-13",
+  "keep_vars": true,
   "assets": {
     "directory": "./apps/eco-map",
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/eco",
       "/api/eco/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "ECO_DB",
+      "database_name": "eco-quest-production",
+      "database_id": "f265a7dd-2cf0-47c0-963d-5d5d2685980f",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ECO_PHOTOS",
+      "bucket_name": "eco-quest-photos"
+    }
+  ],
+  "secrets": {
+    "required": [
+      "ECO_CLASS_CODE",
+      "ECO_AUTH_PEPPER",
+      "ECO_ADMIN_PASSWORD",
+      "ECO_SHEETS_WEBHOOK_URL",
+      "ECO_SHEETS_WEBHOOK_SECRET"
     ]
   },
   "observability": {
