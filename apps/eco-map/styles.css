@@ -227,6 +227,7 @@ a { color: inherit; text-decoration: none; }
 .inspector-content .pixel-label { margin-bottom: 8px; }.inspector-content h3 { font-size: 21px; letter-spacing: -.03em; }.inspector-content > p { margin: 5px 0 17px; color: var(--muted); font-size: 12px; }
 .inspector-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.inspector-stats div { padding: 12px; border-radius: 10px; background: #f0f3e7; }.inspector-stats b, .inspector-stats small { display: block; }.inspector-stats b { font: 900 17px var(--pixel); }.inspector-stats small { color: var(--muted); font-size: 10px; }
 .species-list { margin-top: 18px; }.species-list h4 { margin-bottom: 8px; font-size: 12px; }.species-list span { display: inline-flex; margin: 0 4px 5px 0; padding: 5px 8px; border-radius: 99px; background: #eef1e8; font-size: 10px; }
+.inspector-guide-button { width: 100%; margin-top: 18px; }
 
 /* Observation form */
 .stepper { max-width: 720px; display: flex; align-items: center; margin: 0 0 24px; }
@@ -306,6 +307,17 @@ body.modal-open { overflow: hidden; }
 .location-picker-actions .secondary-button { width: auto; }
 .location-picker-actions .primary-button { min-width: 165px; }
 .location-picker-actions .primary-button:disabled { cursor: not-allowed; transform: none; color: #87938b; background: #dce2d8; box-shadow: none; }
+.guide-editor-card { width: min(760px,100%); }
+.guide-editor-body { padding: 24px 26px 6px; }
+.guide-selected-observation { display: grid; grid-template-columns: 120px minmax(0,1fr); align-items: center; gap: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 15px; background: #f4f6e9; }
+.guide-selected-observation img { width: 120px; aspect-ratio: 4 / 3; border-radius: 11px; object-fit: cover; background: #e8efd7; }
+.guide-selected-observation .pixel-label { margin-bottom: 5px; }
+.guide-selected-observation h3 { font-size: 21px; }
+.guide-selected-observation p { margin-top: 4px; color: var(--muted); font: italic 10px var(--pixel); }
+.guide-selected-observation small { display: block; margin-top: 9px; color: var(--muted); font-size: 10px; }
+.guide-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+.guide-form-grid .full { grid-column: 1 / -1; }
+.guide-form-grid textarea { min-height: 94px; }
 
 /* Mobile nav */
 .mobile-nav { display: none; }
@@ -344,6 +356,7 @@ body.modal-open { overflow: hidden; }
   .dex-count { width: 64px; height: 64px; }.dex-summary { align-items: flex-start; flex-direction: column; padding: 20px; }.dex-progress-wrap { width: 100%; }.dex-grid { grid-template-columns: 1fr; gap: 13px; }.dex-card { display: grid; grid-template-columns: 125px minmax(0,1fr); }.dex-image { height: 100%; min-height: 180px; }.dex-image span { font-size: 52px; }.empty-dex-card { min-height: 180px; }.profile-grid { grid-template-columns: 1fr; }.identity-card { grid-row: auto; min-height: 290px; }.safety-card ul { grid-template-columns: 1fr; }.profile-actions { flex-direction: column; }.profile-actions .secondary-button { width: 100%; }
   .teacher-shell { display: block; padding-top: 26px; }.teacher-sidebar { position: static; height: auto; flex-direction: row; align-items: center; justify-content: space-between; padding: 13px 16px; }.teacher-sidebar nav { display: none; }.teacher-exit { margin: 0; padding: 9px; border: 0; }.teacher-main { padding: 27px 16px 50px; }.teacher-main > header { align-items: flex-start; }.teacher-main h1 { font-size: 27px; }.teacher-main header p { max-width: 230px; }.admin-profile span, .admin-profile b { display: none; }.admin-stats { gap: 8px; }.admin-stats article { padding: 15px; }.admin-stats article b { font-size: 22px; }.teacher-content-grid { grid-template-columns: 1fr; }.class-overview { grid-template-columns: repeat(3,1fr); }.sheets-panel { align-items: stretch; flex-direction: column; }.sheets-panel > div { align-items: flex-start; }.admin-primary { width: 100%; }
   .location-picker-modal { align-items: end; padding: 0; }.location-picker-card { width: 100%; max-height: calc(100svh - 16px); border-radius: 22px 22px 0 0; }.location-picker-header { padding: 20px 18px 16px; }.location-picker-header h2 { font-size: 23px; }.location-picker-header p { max-width: 290px; font-size: 11px; }.location-picker-tools { padding-inline: 12px; }.location-picker-tools span { font-size: 10px; }.location-picker-map-wrap { height: 43vh; min-height: 290px; }.location-picker-form { padding: 17px 18px 2px; }.location-picker-actions { padding: 15px 18px calc(18px + env(safe-area-inset-bottom)); }.location-picker-actions > button { flex: 1; min-width: 0; }
+  .guide-editor-body { padding: 18px 18px 4px; }.guide-selected-observation { grid-template-columns: 92px minmax(0,1fr); gap: 12px; }.guide-selected-observation img { width: 92px; }.guide-selected-observation h3 { font-size: 17px; }.guide-form-grid { grid-template-columns: 1fr; gap: 13px; }.guide-form-grid .full { grid-column: auto; }
 }
 
 @media (max-width: 420px) {

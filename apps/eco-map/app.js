@@ -24,6 +24,7 @@
   var observations = [];
   var guides = [];
   var selectedSpecies;
+  var selectedGuideObservation;
   var markerClusterer;
 
   function api(path, options) {
@@ -343,6 +344,8 @@
   }
 
   function renderObservationInspector(observation) {
+    var existingGuide = guides.find(function (guide) { return guide.observation_id === observation.id; });
+    var guideButtonLabel = existingGuide ? "내 생물도감 수정하기" : "이 생물로 개인 도감 만들기";
     document.getElementById("map-inspector").innerHTML =
       '<div class="inspector-content">' +
         '<img class="observation-photo" src="' + escapeHtml(observation.photo_url) + '" alt="' + escapeHtml(observation.species_name) + ' 대표 사진" />' +
@@ -350,6 +353,7 @@
         '<h3>' + escapeHtml(observation.species_name) + '</h3>' +
         '<p><i>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</i></p>' +
         '<div class="species-list"><h4>발견 기록</h4><span>' + escapeHtml(observation.place_name) + '</span><span>' + escapeHtml(observation.class_number + "반 " + observation.group_number + "모둠 · " + observation.student_name) + '</span></div>' +
+        '<button class="primary-button inspector-guide-button" type="button" data-make-guide="' + escapeHtml(observation.id) + '">' + guideButtonLabel + '</button>' +
       '</div>';
   }
 
@@ -404,6 +408,84 @@
     grid.innerHTML = cards.join("");
     updateDexProgress();
   }
+
+  function openGuideEditor(observation) {
+    var existingGuide = guides.find(function (guide) { return guide.observation_id === observation.id; });
+    if (!existingGuide && guides.length >= dexLimit) {
+      showToast("허용된 생물도감 수를 모두 작성했습니다.");
+      return;
+    }
+    selectedGuideObservation = observation;
+    document.getElementById("guide-editor-title").textContent = existingGuide ? "개인 생물도감 수정" : "개인 생물도감 작성";
+    document.getElementById("guide-selected-observation").innerHTML =
+      '<img src="' + escapeHtml(observation.photo_url) + '" alt="' + escapeHtml(observation.species_name) + ' 대표 사진" />' +
+      '<div><span class="pixel-label">' + escapeHtml(categoryLabel(observation.category)) + '</span><h3>' + escapeHtml(observation.species_name) + '</h3><p>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</p><small>' + escapeHtml(observation.place_name) + '</small></div>';
+    document.getElementById("guide-habitat").value = existingGuide ? existingGuide.habitat : "";
+    document.getElementById("guide-key-features").value = existingGuide ? existingGuide.key_features : observation.features || "";
+    document.getElementById("guide-ecological-role").value = existingGuide ? existingGuide.ecological_role : "";
+    document.getElementById("guide-report").value = existingGuide ? existingGuide.report : "";
+    document.getElementById("guide-source").value = existingGuide ? existingGuide.source : observation.source || "";
+    document.getElementById("save-guide").textContent = existingGuide ? "수정 내용 저장하기" : "생물도감 완성하기";
+    document.getElementById("guide-editor-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("guide-habitat").focus();
+  }
+
+  function closeGuideEditor() {
+    document.getElementById("guide-editor-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+    document.getElementById("guide-form").reset();
+    selectedGuideObservation = null;
+  }
+
+  document.getElementById("map-inspector").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-make-guide]");
+    if (!button) return;
+    var observation = observations.find(function (item) { return item.id === button.dataset.makeGuide; });
+    if (observation) openGuideEditor(observation);
+  });
+
+  document.getElementById("close-guide-editor").addEventListener("click", closeGuideEditor);
+  document.getElementById("cancel-guide-editor").addEventListener("click", closeGuideEditor);
+  document.getElementById("guide-editor-modal").addEventListener("click", function (event) {
+    if (event.target === this) closeGuideEditor();
+  });
+
+  document.getElementById("guide-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!selectedGuideObservation) return;
+    var observationId = selectedGuideObservation.id;
+    var button = document.getElementById("save-guide");
+    button.disabled = true;
+    button.textContent = "생물도감을 저장하는 중…";
+    api("guides", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        observation_id: observationId,
+        habitat: document.getElementById("guide-habitat").value.trim(),
+        key_features: document.getElementById("guide-key-features").value.trim(),
+        ecological_role: document.getElementById("guide-ecological-role").value.trim(),
+        report: document.getElementById("guide-report").value.trim(),
+        source: document.getElementById("guide-source").value.trim()
+      })
+    }).then(function (result) {
+      var savedGuide = Object.assign({ id: result.guide.guide_id }, result.guide);
+      var existingIndex = guides.findIndex(function (guide) { return guide.observation_id === observationId; });
+      if (existingIndex >= 0) guides.splice(existingIndex, 1, savedGuide);
+      else guides.unshift(savedGuide);
+      closeGuideEditor();
+      renderGuides();
+      renderStudentSummary();
+      setView("dex");
+      showToast("개인 생물도감과 Google Sheets 전송 대기열에 저장했습니다.");
+    }).catch(function (error) {
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "생물도감 완성하기";
+    });
+  });
 
   function formatDate(value) {
     if (!value) return "";
@@ -527,7 +609,9 @@
     if (event.target === this) closeLocationPicker();
   });
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !document.getElementById("location-picker-modal").hidden) closeLocationPicker();
+    if (event.key !== "Escape") return;
+    if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
+    else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
   });
   document.getElementById("specific-location-name").addEventListener("input", updatePickerConfirmation);
 
@@ -568,15 +652,83 @@
   });
 
   /* Photo selection */
+  function fileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.addEventListener("load", function () { resolve(reader.result); });
+      reader.addEventListener("error", function () { reject(new Error("사진을 읽지 못했습니다.")); });
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function optimizePhoto(file) {
+    var uploadLimit = 8 * 1024 * 1024;
+    var optimizeAbove = 1.5 * 1024 * 1024;
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      return Promise.reject(new Error("이미지 파일만 등록할 수 있습니다."));
+    }
+    if (file.size <= optimizeAbove) return Promise.resolve(file);
+
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      image.addEventListener("load", function () {
+        var scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(objectUrl);
+
+        var qualities = [0.82, 0.7, 0.58];
+        var bestBlob;
+        function encode(index) {
+          canvas.toBlob(function (blob) {
+            if (!blob) {
+              if (file.size <= uploadLimit) resolve(file);
+              else reject(new Error("사진을 압축하지 못했습니다. 더 작은 사진을 선택해 주세요."));
+              return;
+            }
+            if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+            if (blob.size <= optimizeAbove || index === qualities.length - 1) {
+              var baseName = file.name.replace(/\.[^.]+$/, "") || "eco-photo";
+              var optimized = new File([bestBlob], baseName + ".jpg", { type: "image/jpeg", lastModified: Date.now() });
+              if (optimized.size > uploadLimit) reject(new Error("압축 후에도 사진이 너무 큽니다. 다른 사진을 선택해 주세요."));
+              else resolve(optimized.size < file.size ? optimized : file);
+              return;
+            }
+            encode(index + 1);
+          }, "image/jpeg", qualities[index]);
+        }
+        encode(0);
+      });
+      image.addEventListener("error", function () {
+        URL.revokeObjectURL(objectUrl);
+        if (file.size <= uploadLimit) resolve(file);
+        else reject(new Error("이 사진 형식은 자동 압축할 수 없습니다. 8MB 이하 사진을 선택해 주세요."));
+      });
+      image.src = objectUrl;
+    });
+  }
+
+  function preparePhoto(file) {
+    return optimizePhoto(file).then(function (optimizedFile) {
+      return fileAsDataUrl(optimizedFile).then(function (url) {
+        return { file: optimizedFile, url: url };
+      });
+    });
+  }
+
   document.getElementById("photo-input").addEventListener("change", function (event) {
     var selected = Array.prototype.slice.call(event.target.files || []).slice(0, 3 - photos.length);
-    selected.forEach(function (file) {
-      var reader = new FileReader();
-      reader.addEventListener("load", function () {
-        photos.push({ file: file, url: reader.result });
-        renderPhotos();
-      });
-      reader.readAsDataURL(file);
+    if (!selected.length) return;
+    showToast("사진을 등록하기 좋게 최적화하는 중입니다…");
+    Promise.all(selected.map(preparePhoto)).then(function (prepared) {
+      photos = photos.concat(prepared).slice(0, 3);
+      renderPhotos();
+      showToast("사진 준비가 완료되었습니다. 첫 번째 사진이 대표 사진입니다.");
+    }).catch(function (error) {
+      showToast(error.message);
     });
     event.target.value = "";
   });

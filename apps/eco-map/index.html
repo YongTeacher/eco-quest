@@ -350,6 +350,41 @@
     </section>
   </div>
 
+  <div id="guide-editor-modal" class="location-picker-modal" role="dialog" aria-modal="true" aria-labelledby="guide-editor-title" hidden>
+    <section class="location-picker-card guide-editor-card">
+      <header class="location-picker-header">
+        <div><span class="pixel-label">MY FIELD GUIDE</span><h2 id="guide-editor-title">개인 생물도감 작성</h2><p>공동 관찰 사진을 바탕으로 학생이 직접 조사한 내용을 기록합니다.</p></div>
+        <button id="close-guide-editor" class="modal-close" type="button" aria-label="생물도감 작성 닫기">×</button>
+      </header>
+      <form id="guide-form">
+        <div class="guide-editor-body">
+          <div id="guide-selected-observation" class="guide-selected-observation"></div>
+          <div class="guide-form-grid">
+            <label class="field-label">서식지
+              <textarea id="guide-habitat" rows="3" minlength="5" maxlength="1000" placeholder="이 생물이 주로 살아가는 환경을 적어주세요." required></textarea>
+            </label>
+            <label class="field-label">주요 특징
+              <textarea id="guide-key-features" rows="3" minlength="5" maxlength="1500" placeholder="생김새와 다른 생물과 구별되는 특징을 적어주세요." required></textarea>
+            </label>
+            <label class="field-label full">생태계에서의 역할
+              <textarea id="guide-ecological-role" rows="3" minlength="5" maxlength="1500" placeholder="먹이 관계, 꽃가루받이, 분해 등 생태계에서 하는 역할을 적어주세요." required></textarea>
+            </label>
+            <label class="field-label full">조사 보고서
+              <textarea id="guide-report" rows="6" minlength="20" maxlength="5000" placeholder="관찰 내용과 조사하며 새롭게 알게 된 사실을 20자 이상 작성하세요." required></textarea>
+            </label>
+            <label class="field-label full">참고 자료
+              <input id="guide-source" type="text" minlength="2" maxlength="500" placeholder="참고한 웹 주소 또는 책 이름" required />
+            </label>
+          </div>
+        </div>
+        <footer class="location-picker-actions">
+          <button id="cancel-guide-editor" class="secondary-button" type="button">취소</button>
+          <button id="save-guide" class="primary-button" type="submit">생물도감 완성하기</button>
+        </footer>
+      </form>
+    </section>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=78b9d58b34b7b43d0d4edebe6efa2ac4&libraries=clusterer&autoload=false"></script>
   <script src="./app.js"></script>
