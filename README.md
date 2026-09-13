@@ -8,15 +8,15 @@
 - 개인 생물도감
 - 교사 Google Sheets 동기화
 
-## Cloudflare Pages 배포
+## Cloudflare Workers 배포
 
-- Framework preset: `None`
 - Build command: 비워 둠
-- Build output directory: `apps/eco-map`
-- Root directory: 비워 둠
+- Deploy command: `npx wrangler deploy`
+- Non-production branches: 필요할 때만 사용
+- Cloudflare Access: 사용하지 않음
 
-Pages Functions는 저장소 루트의 `functions` 폴더를 사용합니다. 운영 데이터는 D1 `ECO_DB`,
-대표 사진은 비공개 R2 `ECO_PHOTOS` 바인딩에 저장합니다. 자세한 설정은
-`docs/eco-quest-production.md`를 참고하세요.
+Workers Static Assets는 `apps/eco-map`의 화면을 제공하고 `src/index.js`가 `/api/eco/*` 요청을
+서버 API로 전달합니다. 운영 데이터는 D1 `ECO_DB`, 대표 사진은 비공개 R2 `ECO_PHOTOS`
+바인딩에 저장합니다. 자세한 설정은 `docs/eco-quest-production.md`를 참고하세요.
 
 비밀 변수, Apps Script 배포 URL과 동기화 비밀키는 저장소에 커밋하지 않습니다.
