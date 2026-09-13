@@ -907,7 +907,7 @@
     document.getElementById("candidate-list").innerHTML = items.map(function (item, index) {
       return '<article class="candidate-card" tabindex="0" role="button" data-candidate-index="' + index + '" data-name="' + escapeHtml(item.name) + '" data-scientific="' + escapeHtml(item.scientific) + '">' +
         '<span class="rank">0' + (index + 1) + '</span>' +
-        '<div class="candidate-photo"><span class="candidate-photo-placeholder">' + item.icon + '</span><img data-candidate-image="' + index + '" alt="' + escapeHtml(item.name) + ' 대표 사진" loading="lazy" hidden /></div>' +
+        '<div class="candidate-photo"><span class="candidate-photo-placeholder"><b>' + item.icon + '</b><small>대표 사진 검색 중</small></span><img data-candidate-image="' + index + '" alt="' + escapeHtml(item.name) + ' 대표 사진" loading="eager" /></div>' +
         '<h4>' + escapeHtml(item.name) + '</h4><p>' + escapeHtml(item.scientific) + '</p><small>' + escapeHtml(item.clue) + '</small><span class="confidence">' + escapeHtml(item.confidence) + '</span>' +
         '<a class="candidate-photo-credit" data-candidate-credit="' + index + '" target="_blank" rel="noopener noreferrer" hidden></a>' +
       '</article>';
@@ -922,6 +922,7 @@
     if (!imageUrl) return null;
     return {
       imageUrl: imageUrl,
+      fallbackImageUrl: photo.square_url || photo.url || "",
       detailUrl: "https://www.inaturalist.org/photos/" + photo.id,
       credit: "사진: " + (photo.attribution_name || String(photo.attribution || "").replace(/^\(c\)\s*/i, "").split(",")[0] || "iNaturalist 관찰자") + " · " + photo.license_code.toUpperCase()
     };
@@ -952,7 +953,7 @@
       });
       var photo = taxon && taxon.default_photo;
       return candidatePhotoData(photo) || findLicensedObservationPhoto(scientificName);
-    }).catch(function () { return null; });
+    }).catch(function () { return findLicensedObservationPhoto(scientificName); });
     return candidatePhotoCache[scientificName];
   }
 
@@ -960,6 +961,10 @@
     items.forEach(function (item, index) {
       if (/^(Taxon incertae sedis|Unidentified organism|Manual identification)$/i.test(item.scientific)) return;
       findLicensedTaxonPhoto(item.scientific).then(function (photo) {
+        if (photo) return photo;
+        var relatedTaxon = item.scientific.split(/\s+/)[0];
+        return relatedTaxon ? findLicensedObservationPhoto(relatedTaxon) : null;
+      }).then(function (photo) {
         if (!photo) return;
         var card = document.querySelector('.candidate-card[data-candidate-index="' + index + '"]');
         if (!card || card.dataset.scientific !== item.scientific) return;
@@ -967,13 +972,20 @@
         var credit = card.querySelector('[data-candidate-credit="' + index + '"]');
         if (!image || !credit) return;
         image.addEventListener("load", function () {
-          image.hidden = false;
+          image.classList.add("loaded");
           var placeholder = image.parentElement.querySelector(".candidate-photo-placeholder");
           if (placeholder) placeholder.hidden = true;
-        }, { once: true });
+        });
         image.addEventListener("error", function () {
+          if (photo.fallbackImageUrl && image.src !== photo.fallbackImageUrl && !image.dataset.fallbackTried) {
+            image.dataset.fallbackTried = "true";
+            image.src = photo.fallbackImageUrl;
+            return;
+          }
           credit.hidden = true;
-        }, { once: true });
+          var placeholder = image.parentElement.querySelector(".candidate-photo-placeholder");
+          if (placeholder) placeholder.innerHTML = '<b>' + escapeHtml(item.icon) + '</b><small>사진을 다시 불러와 주세요</small>';
+        });
         image.src = photo.imageUrl;
         credit.href = photo.detailUrl;
         credit.textContent = photo.credit;
