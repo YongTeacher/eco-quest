@@ -27,6 +27,9 @@
   var selectedGuideObservation;
   var markerClusterer;
   var candidatePhotoCache = {};
+  var guideCardMap;
+  var guideCardMarker;
+  var guideCardMapRequest = 0;
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -419,9 +422,59 @@
     updateDexProgress();
   }
 
+  function showGuideMapError(message) {
+    var loading = document.getElementById("guide-location-map-loading");
+    if (!loading) return;
+    loading.hidden = false;
+    loading.classList.add("error");
+    loading.textContent = message;
+  }
+
+  function renderGuideLocationMap(latitude, longitude, placeName) {
+    var requestId = ++guideCardMapRequest;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      showGuideMapError("발견 위치 좌표가 기록되지 않았습니다.");
+      return;
+    }
+    if (!window.kakao || !window.kakao.maps || typeof window.kakao.maps.load !== "function") {
+      showGuideMapError("카카오맵을 불러오지 못했습니다.");
+      return;
+    }
+    window.kakao.maps.load(function () {
+      window.setTimeout(function () {
+        var container = document.getElementById("guide-location-map");
+        if (requestId !== guideCardMapRequest || !container || document.getElementById("guide-card-modal").hidden) return;
+        try {
+          var position = new window.kakao.maps.LatLng(latitude, longitude);
+          guideCardMap = new window.kakao.maps.Map(container, {
+            center: position,
+            level: 3
+          });
+          guideCardMarker = new window.kakao.maps.Marker({
+            map: guideCardMap,
+            position: position,
+            title: placeName
+          });
+          guideCardMap.addControl(new window.kakao.maps.ZoomControl(), window.kakao.maps.ControlPosition.RIGHT);
+          document.getElementById("guide-location-map-loading").hidden = true;
+          guideCardMap.relayout();
+          guideCardMap.setCenter(position);
+        } catch (_error) {
+          showGuideMapError("발견 위치 지도를 표시하지 못했습니다.");
+        }
+      }, 0);
+    });
+  }
+
   function openGuideCard(guide, index) {
     var observation = observations.find(function (item) { return item.id === guide.observation_id; }) || {};
     var placeName = guide.place_name || observation.place_name || "장소 미기록";
+    var latitude = Number(guide.latitude || observation.latitude);
+    var longitude = Number(guide.longitude || observation.longitude);
+    var hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+    var kakaoMapUrl = hasCoordinates
+      ? "https://map.kakao.com/link/map/" + encodeURIComponent(placeName) + "," + latitude + "," + longitude
+      : "";
     var sourceUrl = safeExternalUrl(guide.source);
     var sourceHtml = sourceUrl
       ? '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(guide.source) + '</a>'
@@ -431,6 +484,7 @@
     detail.innerHTML =
       '<header class="field-guide-card-head"><div><span class="pixel-label">ECO QUEST FIELD CARD</span><h2 id="guide-card-title">' + escapeHtml(guide.species_name) + '</h2><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p></div><div class="field-guide-number"><small>ARCHIVE</small><b>NO. ' + String(index + 1).padStart(3, "0") + '</b></div></header>' +
       '<div class="field-guide-hero"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + ' 대표 사진" /><span>' + escapeHtml(categoryLabel(guide.category)) + ' · ' + escapeHtml(placeName) + '</span></div>' +
+      '<section class="field-guide-location"><div class="field-guide-location-head"><div><h3>DISCOVERY MAP · 발견 위치</h3><p>⌖ ' + escapeHtml(placeName) + '</p></div>' + (kakaoMapUrl ? '<a href="' + escapeHtml(kakaoMapUrl) + '" target="_blank" rel="noopener noreferrer">카카오맵에서 크게 보기 ↗</a>' : '') + '</div><div class="field-guide-location-map-wrap"><div id="guide-location-map" class="field-guide-location-map" aria-label="' + escapeHtml(placeName) + ' 발견 위치 지도"></div><div id="guide-location-map-loading" class="field-guide-location-map-loading">발견 위치 지도를 불러오는 중입니다…</div></div></section>' +
       '<div class="field-guide-facts">' +
         '<section class="field-guide-fact"><h3>HABITAT · 서식지</h3><p>' + escapeHtml(guide.habitat || "서식지 미기록") + '</p></section>' +
         '<section class="field-guide-fact"><h3>KEY FEATURES · 주요 특징</h3><p>' + escapeHtml(guide.key_features || "주요 특징 미기록") + '</p></section>' +
@@ -442,11 +496,15 @@
     document.getElementById("guide-card-modal").hidden = false;
     document.body.classList.add("modal-open");
     document.getElementById("close-guide-card").focus();
+    renderGuideLocationMap(latitude, longitude, placeName);
   }
 
   function closeGuideCard() {
+    guideCardMapRequest += 1;
     document.getElementById("guide-card-modal").hidden = true;
     document.body.classList.remove("modal-open");
+    guideCardMarker = null;
+    guideCardMap = null;
   }
 
   document.getElementById("dex-grid").addEventListener("click", function (event) {
