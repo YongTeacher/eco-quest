@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#173f35" />
+  <meta name="description" content="사진과 위치로 우리 마을의 생물을 기록하고 함께 완성하는 수업용 생태지도" />
+  <title>ECO QUEST — 우리 마을 생태지도</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="prototype-ribbon" role="status">PRIVATE CLASS ARCHIVE · 로그인 후 데이터가 저장됩니다</div>
+
+  <main id="login-screen" class="login-screen">
+    <section class="login-visual" aria-hidden="true">
+      <div class="sky-orb"></div>
+      <div class="pixel-cloud cloud-a"></div>
+      <div class="pixel-cloud cloud-b"></div>
+      <div class="school-scene">
+        <span class="tree tree-a">♣</span>
+        <span class="tree tree-b">♣</span>
+        <div class="school-building">
+          <div class="school-sign">우리 학교</div>
+          <div class="windows"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <span class="creature butterfly">◆</span>
+        <span class="creature bird">⌁</span>
+      </div>
+      <div class="visual-copy">
+        <p class="pixel-label">FIELD ARCHIVE 01</p>
+        <h1>걸어서 발견하고,<br />함께 완성하는 생태도감</h1>
+        <p>우리 마을의 작은 생명들이 수업의 기록이 됩니다.</p>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <a class="brand" href="https://gamifyclass.pages.dev/apps" aria-label="GAMIFY CLASS 앱 목록으로 이동">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><b>ECO QUEST</b><small>우리 마을 생태지도</small></span>
+      </a>
+
+      <div class="login-card">
+        <span class="step-chip">탐사 입장</span>
+        <h2>수업에 참여하기</h2>
+        <p class="login-help">선생님이 알려준 수업 코드와 개인 정보를 입력하세요.</p>
+
+        <form id="login-form">
+          <label>
+            <span>수업 코드</span>
+            <input id="class-code" name="classCode" autocomplete="one-time-code" placeholder="예: ECO123" required />
+          </label>
+          <div class="field-row">
+            <label>
+              <span>반</span>
+              <select id="class-number" name="classNumber" required>
+                <option value="">선택</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option>
+              </select>
+            </label>
+            <label>
+              <span>번호</span>
+              <input id="student-number" name="studentNumber" inputmode="numeric" min="1" max="99" placeholder="예: 4" required />
+            </label>
+          </div>
+          <div class="field-row">
+            <label><span>이름</span><input id="student-name" name="studentName" maxlength="30" autocomplete="name" required /></label>
+            <label><span>모둠</span><input id="group-number" name="groupNumber" type="number" min="1" max="20" placeholder="예: 4" required /></label>
+          </div>
+          <label><span>개인 PIN</span><input id="student-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="숫자 4자리" required /></label>
+          <button class="primary-button" type="submit">탐사 시작하기 <span aria-hidden="true">→</span></button>
+        </form>
+
+        <div class="login-divider"><span>또는</span></div>
+        <button id="teacher-preview" class="secondary-button" type="button">교사 관리자 로그인</button>
+      </div>
+      <p class="privacy-note">수업 코드가 있는 학생과 담당 교사만 지도를 볼 수 있습니다.</p>
+    </section>
+  </main>
+
+  <div id="student-app" class="app-shell" hidden>
+    <header class="app-header">
+      <button class="mini-brand" type="button" data-go="home" aria-label="홈으로 이동">
+        <span class="brand-mark small" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><b>ECO QUEST</b><small>우리 마을 생태지도</small></span>
+      </button>
+      <div class="header-tools">
+        <span id="student-class-badge" class="class-badge">-반 · -모둠</span>
+        <button class="avatar-button" type="button" data-go="profile" aria-label="내 정보"><span id="student-avatar">--</span></button>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <aside class="desktop-nav" aria-label="주요 메뉴">
+        <div class="nav-section-label">EXPLORE</div>
+        <button class="side-nav active" type="button" data-view="home"><span>⌂</span> 홈</button>
+        <button class="side-nav" type="button" data-view="map"><span>⌖</span> 생태지도</button>
+        <button class="side-nav" type="button" data-view="discover"><span>＋</span> 생물 발견</button>
+        <button class="side-nav" type="button" data-view="dex"><span>▦</span> 나의 도감</button>
+        <div class="nav-section-label">ACCOUNT</div>
+        <button class="side-nav" type="button" data-view="profile"><span>◎</span> 내 정보</button>
+        <div class="mini-progress">
+          <div><span>도감 진행도</span><b id="side-progress-label">2 / 3</b></div>
+          <div class="progress-track"><i id="side-progress-bar" style="width:66.6%"></i></div>
+        </div>
+      </aside>
+
+      <section class="view-wrap">
+        <section id="view-home" class="app-view active" aria-labelledby="home-title">
+          <div class="home-hero">
+            <div class="hero-copy">
+              <span class="pixel-label dark">2026 · 생명과학 수행평가</span>
+              <h2 id="home-title">안녕하세요,<br /><em id="home-student-name">탐사대원</em>!</h2>
+              <p>오늘 발견한 생물을 우리 반 지도에 기록해 보세요.</p>
+              <button class="primary-button compact" type="button" data-go="discover">새로운 생물 발견 <span>＋</span></button>
+            </div>
+            <div class="hero-card" aria-label="탐사 현황">
+              <div class="radar-grid"><i></i><i></i><i></i></div>
+              <span class="radar-dot dot-one"></span>
+              <span class="radar-dot dot-two"></span>
+              <span class="radar-dot dot-three"></span>
+              <div class="hero-stat"><strong id="team-observation-count">0</strong><span>우리 모둠 관찰</span></div>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <div><span class="pixel-label">MY PROGRESS</span><h3>나의 탐사 현황</h3></div>
+            <button class="quiet-link" type="button" data-go="dex">도감 전체보기 →</button>
+          </div>
+          <div class="stat-grid">
+            <article class="stat-card green"><span class="stat-icon">▦</span><div><b id="home-guide-count">0<small>/3</small></b><p>완성한 생물도감</p></div></article>
+            <article class="stat-card yellow"><span class="stat-icon">⌖</span><div><b id="home-observation-count">0</b><p>참여한 공동 관찰</p></div></article>
+            <article class="stat-card blue"><span class="stat-icon">◇</span><div><b id="home-category-count">0</b><p>발견한 생물 분류</p></div></article>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel activity-panel">
+              <div class="section-head small"><div><span class="pixel-label">RECENT</span><h3>최근 우리 반 발견</h3></div></div>
+              <div id="recent-observations" class="activity-list"><p class="empty-message">아직 등록된 관찰이 없습니다.</p></div>
+            </section>
+
+            <section class="panel class-progress-panel">
+              <div class="section-head small"><div><span class="pixel-label">TOGETHER</span><h3>아홉 반이 함께</h3></div></div>
+              <div class="big-number"><span id="all-observation-count">0</span><small>개의 관찰</small></div>
+              <div class="class-bars" aria-label="학급별 관찰 진행도">
+                <span style="height:44%"><i>1</i></span><span style="height:61%"><i>2</i></span><span class="mine" style="height:78%"><i>3</i></span><span style="height:53%"><i>4</i></span><span style="height:67%"><i>5</i></span><span style="height:38%"><i>6</i></span><span style="height:71%"><i>7</i></span><span style="height:58%"><i>8</i></span><span style="height:49%"><i>9</i></span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-map" class="app-view" aria-labelledby="map-title">
+          <div class="page-title-row">
+            <div><span class="pixel-label">LIVE ARCHIVE</span><h2 id="map-title">우리 마을 생태지도</h2><p>용인삼계고등학교를 중심으로 공동 관찰이 모입니다.</p></div>
+            <button class="primary-button compact desktop-only" type="button" data-go="discover">발견 등록 <span>＋</span></button>
+          </div>
+
+          <div class="class-tabs" role="tablist" aria-label="학급 지도 선택">
+            <button class="active" type="button" data-class="all" role="tab" aria-selected="true">통합</button>
+            <button type="button" data-class="1" role="tab">1반</button><button type="button" data-class="2" role="tab">2반</button>
+            <button type="button" data-class="3" role="tab">3반</button><button type="button" data-class="4" role="tab">4반</button>
+            <button type="button" data-class="5" role="tab">5반</button><button type="button" data-class="6" role="tab">6반</button>
+            <button type="button" data-class="7" role="tab">7반</button><button type="button" data-class="8" role="tab">8반</button>
+            <button type="button" data-class="9" role="tab">9반</button>
+          </div>
+
+          <div class="filter-row" aria-label="생물 분류 필터">
+            <button class="active" type="button" data-filter="all">전체 <b id="map-total-count">0</b></button>
+            <button type="button" data-filter="plant"><i class="legend-dot plant-dot"></i>식물</button>
+            <button type="button" data-filter="insect"><i class="legend-dot insect-dot"></i>곤충</button>
+            <button type="button" data-filter="bird"><i class="legend-dot bird-dot"></i>조류</button>
+            <button type="button" data-filter="animal"><i class="legend-dot animal-dot"></i>동물</button>
+            <button type="button" data-filter="unknown"><i class="legend-dot unknown-dot"></i>미확인</button>
+          </div>
+
+          <div class="map-layout">
+            <div class="map-frame">
+              <div class="map-toolbar">
+                <span><i class="live-dot"></i><b id="map-summary">용인삼계고등학교 · 관찰 0건</b></span>
+                <div class="map-toolbar-actions">
+                  <a href="https://map.kakao.com/link/search/%EC%9A%A9%EC%9D%B8%EC%82%BC%EA%B3%84%EA%B3%A0%EB%93%B1%ED%95%99%EA%B5%90" target="_blank" rel="noopener noreferrer">카카오맵에서 열기 ↗</a>
+                  <button id="locate-button" type="button" aria-label="내 위치로 이동">◎ 내 위치</button>
+                </div>
+              </div>
+              <div class="map-canvas" id="map-canvas" aria-label="용인삼계고등학교 주변 카카오 지도">
+                <div id="kakao-map" class="kakao-map"></div>
+                <div id="map-loading" class="map-loading" role="status">
+                  <span class="compass-icon">⌖</span>
+                  <b>용인삼계고등학교 지도를 불러오는 중입니다</b>
+                  <small>경기도 용인시 처인구 포곡읍 백옥대로1898번길 34-42</small>
+                </div>
+              </div>
+            </div>
+
+            <aside id="map-inspector" class="map-inspector">
+              <div class="inspector-placeholder">
+                <span class="compass-icon">⌖</span>
+                <h3>용인삼계고등학교 탐사지도</h3>
+                <p>학생 관찰이 등록되면 실제 발견 위치에 생물 핀이 표시됩니다.</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="view-discover" class="app-view" aria-labelledby="discover-title">
+          <div class="page-title-row">
+            <div><span class="pixel-label">NEW OBSERVATION</span><h2 id="discover-title">새로운 생물 발견</h2><p>모둠 공동 관찰로 등록되며 모든 모둠원에게 공유됩니다.</p></div>
+            <span id="discover-team-pill" class="team-pill">-반 · -모둠</span>
+          </div>
+
+          <div class="stepper" aria-label="등록 단계">
+            <span class="active"><i>1</i>사진·특징</span><b></b><span><i>2</i>AI 후보</span><b></b><span><i>3</i>조사·선택</span><b></b><span><i>4</i>등록</span>
+          </div>
+
+          <form id="observation-form" class="observation-grid">
+            <section class="panel form-panel">
+              <div class="panel-title"><span class="number-box">01</span><div><h3>사진 등록</h3><p>여러 각도의 사진을 최대 3장까지 올려주세요.</p></div></div>
+              <label class="upload-zone" for="photo-input">
+                <span class="camera-icon">▣</span><b>사진을 촬영하거나 선택</b><small>JPG · PNG · HEIC, 최대 3장</small>
+                <input id="photo-input" type="file" accept="image/*" capture="environment" multiple />
+              </label>
+              <div id="photo-list" class="photo-list" aria-live="polite">
+                <div class="photo-slot empty"><span>＋</span><small>사진 1</small></div>
+                <div class="photo-slot empty"><span>＋</span><small>사진 2</small></div>
+                <div class="photo-slot empty"><span>＋</span><small>사진 3</small></div>
+              </div>
+              <p class="form-tip"><span>!</span> 얼굴, 차량 번호, 집 주소가 나오지 않게 촬영하세요. 최종 등록에는 대표 사진 한 장만 남습니다.</p>
+            </section>
+
+            <section class="panel form-panel">
+              <div class="panel-title"><span class="number-box">02</span><div><h3>관찰한 특징</h3><p>직접 본 정보를 자세히 적을수록 후보가 정확해집니다.</p></div></div>
+              <label class="field-label">생물의 큰 분류
+                <select id="category-select" required>
+                  <option value="">선택하세요</option><option value="plant">식물</option><option value="insect">곤충</option><option value="bird">조류</option><option value="animal">포유류</option><option value="water">양서·파충류·수생생물</option><option value="fungi">균류</option><option value="etc">기타</option>
+                </select>
+              </label>
+              <label class="field-label">발견 위치
+                <div class="location-field"><span>⌖</span><input id="observation-location" type="text" placeholder="지도에서 위치를 선택해 주세요" aria-label="발견 위치" readonly required /><button id="open-location-picker" type="button">지도에서 선택</button></div>
+                <small id="location-coordinate" class="location-coordinate">아직 위치가 선택되지 않았습니다.</small>
+                <input id="observation-latitude" type="hidden" />
+                <input id="observation-longitude" type="hidden" />
+              </label>
+              <label class="field-label">눈으로 확인한 특징
+                <textarea id="feature-input" rows="5" placeholder="예: 노란색 꽃이고 잎 가장자리가 톱니처럼 생겼어요. 줄기를 자르면 흰 즙이 나왔어요." required></textarea>
+              </label>
+              <button id="analyze-button" class="primary-button analyze-button" type="button">사진과 특징 분석하기 <span>✦</span></button>
+            </section>
+
+            <section id="candidate-section" class="panel candidate-panel" hidden>
+              <div class="panel-title"><span class="number-box">BETA</span><div><h3>조사용 생물 후보</h3><p>현재 후보는 기능 시험용입니다. 후보를 그대로 믿지 말고 직접 검색해 확인하세요.</p></div></div>
+              <div id="candidate-list" class="candidate-list"></div>
+              <button id="manual-identify" class="secondary-button" type="button">후보에 없어요 · 직접 검색하기</button>
+            </section>
+
+            <section id="research-section" class="panel research-panel" hidden>
+              <div class="panel-title"><span class="number-box">03</span><div><h3>조사 결과 작성</h3><p>선택한 생물의 근거를 남기면 자동 등록됩니다.</p></div></div>
+              <div id="selected-species" class="selected-species"></div>
+              <label class="field-label">이 생물이라고 판단한 근거 2가지
+                <textarea id="reason-input" rows="4" placeholder="사진에서 확인한 특징과 다른 후보와 구별되는 점을 적어주세요."></textarea>
+              </label>
+              <label class="field-label">참고 자료
+                <input id="source-input" type="text" placeholder="https:// 또는 참고한 책 이름" />
+              </label>
+              <label class="check-row"><input type="checkbox" id="research-check" /><span>후보의 특징을 직접 비교하고 조사했습니다.</span></label>
+              <button id="finalize-button" class="primary-button" type="button">학생 동정 완료로 등록 <span>→</span></button>
+            </section>
+          </form>
+        </section>
+
+        <section id="view-dex" class="app-view" aria-labelledby="dex-title">
+          <div class="page-title-row">
+            <div><span class="pixel-label">MY FIELD GUIDE</span><h2 id="dex-title">나의 생태도감</h2><p>공동 관찰 중 내가 조사할 생물을 골라 도감을 완성하세요.</p></div>
+            <div class="dex-count"><strong id="dex-limit">3</strong><span>최대 도감</span></div>
+          </div>
+
+          <div class="dex-summary panel">
+            <div><span class="dex-level">LEVEL 02</span><h3>초록 탐사대원</h3><p>도감 하나를 더 완성하면 기본 목표를 달성합니다.</p></div>
+            <div class="dex-progress-wrap"><div><span>완성도</span><b id="dex-progress-text">2 / 3</b></div><div class="progress-track large"><i id="dex-progress-bar" style="width:66.6%"></i></div></div>
+          </div>
+
+          <div id="dex-grid" class="dex-grid"><button class="empty-dex-card" type="button" data-go="map"><span>＋</span><h3>첫 도감 만들기</h3><p>공동 관찰에서 생물을 선택하세요.</p></button></div>
+          <button id="add-dex-slot" class="add-slot-button" type="button"><span>＋</span> 추가 도감 요청 <small>교사 승인 후 최대 5개</small></button>
+        </section>
+
+        <section id="view-profile" class="app-view" aria-labelledby="profile-title">
+          <div class="page-title-row"><div><span class="pixel-label">MY ACCOUNT</span><h2 id="profile-title">내 정보</h2><p>현재 참여 중인 수행평가와 계정 정보입니다.</p></div></div>
+          <div class="profile-grid">
+            <section class="panel identity-card"><div id="profile-avatar" class="large-avatar">--</div><h3 id="profile-name">-</h3><p id="profile-meta">-반 -번 · -모둠</p><span class="session-badge">탐사 참여 중</span></section>
+            <section class="panel assignment-card"><span class="pixel-label">CURRENT QUEST</span><h3>우리 마을 주변의 생물 조사하기</h3><dl><div><dt>진행 기간</dt><dd>9월 7일 — 9월 30일</dd></div><div><dt>개인 도감</dt><dd>2개 완성 · 최대 3개</dd></div><div><dt>공동 관찰</dt><dd>4모둠 18건</dd></div></dl></section>
+            <section class="panel safety-card"><span class="pixel-label">FIELD RULES</span><h3>탐사 약속</h3><ul><li>생물을 잡거나 훼손하지 않기</li><li>친구 얼굴과 집 주소 촬영하지 않기</li><li>위험한 장소에 들어가지 않기</li><li>모르는 생물은 미확인으로 남기기</li></ul></section>
+          </div>
+          <div class="profile-actions"><button id="logout-button" class="text-button danger" type="button">로그아웃</button></div>
+        </section>
+      </section>
+    </div>
+
+    <nav class="mobile-nav" aria-label="주요 메뉴">
+      <button class="active" type="button" data-view="home"><span>⌂</span><small>홈</small></button>
+      <button type="button" data-view="map"><span>⌖</span><small>지도</small></button>
+      <button class="discover-nav" type="button" data-view="discover"><span>＋</span><small>발견</small></button>
+      <button type="button" data-view="dex"><span>▦</span><small>내 도감</small></button>
+      <button type="button" data-view="profile"><span>◎</span><small>내 정보</small></button>
+    </nav>
+  </div>
+
+  <div id="teacher-app" class="teacher-shell" hidden>
+    <aside class="teacher-sidebar">
+      <div class="mini-brand light"><span class="brand-mark small"><i></i><i></i><i></i><i></i></span><span><b>ECO QUEST</b><small>관리자</small></span></div>
+      <nav><button class="active" type="button">▦ 대시보드</button><button type="button">⌖ 생태지도</button><button type="button">♙ 학생·모둠</button><button type="button">◎ 관찰 기록</button><button type="button">□ 개인 도감</button><button type="button">⚙ 수업 설정</button></nav>
+      <button id="exit-teacher" class="teacher-exit" type="button">← 관리자 로그아웃</button>
+    </aside>
+    <main class="teacher-main">
+      <header><div><span class="pixel-label">ADMIN CONSOLE</span><h1>전체 수업 현황</h1><p>1반부터 9반까지의 생태 탐사 진행 상황입니다.</p></div><div class="admin-profile"><span>관리자</span><b>배성용 선생님</b><i>BS</i></div></header>
+      <div class="admin-stats">
+        <article><span>참여 학생</span><b><span id="admin-student-count">0</span><small>명</small></b><em>9개 학급</em></article>
+        <article><span>공동 관찰</span><b><span id="admin-observation-count">0</span><small>건</small></b><em>실시간 저장</em></article>
+        <article><span>완성 도감</span><b><span id="admin-guide-count">0</span><small>개</small></b><em>개인별 기록</em></article>
+        <article class="alert"><span>시트 전송 대기</span><b><span id="admin-sync-count">0</span><small>건</small></b><em>재전송 가능</em></article>
+      </div>
+      <div class="teacher-content-grid">
+        <section class="admin-panel classes-panel"><div class="admin-panel-head"><div><span class="pixel-label">CLASSES</span><h2>학급별 현황</h2></div><button type="button">전체 보기 →</button></div><div id="class-overview" class="class-overview"></div></section>
+        <section class="admin-panel exception-panel"><div class="admin-panel-head"><div><span class="pixel-label">REVIEW QUEUE</span><h2>확인이 필요한 기록</h2></div><span class="count-badge">0</span></div><div class="exception-list"><p class="empty-message">검토 목록 기능은 다음 단계에서 연결됩니다.</p></div></section>
+      </div>
+      <section class="admin-panel sheets-panel"><div><span class="sheet-icon">▦</span><div><span class="pixel-label">GOOGLE SHEETS</span><h2>마스터 시트 동기화</h2><p>학생 명단, 공동 관찰, 개인 도감과 제출 현황을 선생님의 시트에 반영합니다.</p></div></div><button id="sync-sheets" class="admin-primary" type="button">지금 동기화</button></section>
+    </main>
+  </div>
+
+  <div id="location-picker-modal" class="location-picker-modal" role="dialog" aria-modal="true" aria-labelledby="location-picker-title" hidden>
+    <section class="location-picker-card">
+      <header class="location-picker-header">
+        <div><span class="pixel-label">PIN THE SPOT</span><h2 id="location-picker-title">발견 위치 선택</h2><p>생물을 발견한 지점을 지도에서 누른 뒤 구체적인 장소명을 적어주세요.</p></div>
+        <button id="close-location-picker" class="modal-close" type="button" aria-label="위치 선택 닫기">×</button>
+      </header>
+      <div class="location-picker-tools">
+        <span id="picker-status"><i class="live-dot"></i> 지도를 눌러 핀을 놓아주세요.</span>
+        <button id="picker-current-location" type="button">◎ 현재 위치 사용</button>
+      </div>
+      <div class="location-picker-map-wrap">
+        <div id="location-picker-map" class="location-picker-map" aria-label="발견 위치 선택용 카카오 지도"></div>
+        <div id="picker-map-loading" class="picker-map-loading" role="status">카카오맵을 불러오는 중입니다…</div>
+      </div>
+      <div class="location-picker-form">
+        <label class="field-label" for="specific-location-name">구체적인 장소명
+          <input id="specific-location-name" type="text" maxlength="60" placeholder="예: 본관 동쪽 화단, 운동장 북쪽 펜스" />
+        </label>
+        <p><span>TIP</span> 친구들이 같은 장소를 알아볼 수 있도록 건물·방향·주변 시설을 함께 적어주세요.</p>
+      </div>
+      <footer class="location-picker-actions">
+        <button id="cancel-location-picker" class="secondary-button" type="button">취소</button>
+        <button id="confirm-location-picker" class="primary-button" type="button" disabled>이 위치로 결정</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=78b9d58b34b7b43d0d4edebe6efa2ac4&libraries=clusterer&autoload=false"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
