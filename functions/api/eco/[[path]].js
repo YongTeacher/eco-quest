@@ -259,7 +259,7 @@ async function getPhoto({ env }, id) {
 async function listGuides({ request, env }, user) {
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
   const result = await env.ECO_DB.prepare(
-    "SELECT g.*, o.species_name, o.scientific_name, o.category FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
+    "SELECT g.*, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
   ).bind(user.id).all();
   const origin = new URL(request.url).origin;
   return json({ ok: true, guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id }; }), guide_limit: user.guide_limit });
@@ -291,6 +291,11 @@ async function createGuide(context, user) {
     species_name: observation.species_name,
     scientific_name: observation.scientific_name,
     category: observation.category,
+    place_name: observation.place_name,
+    latitude: observation.latitude,
+    longitude: observation.longitude,
+    discoverer_name: observation.student_name,
+    observed_at: observation.created_at,
     habitat: text(body.habitat, 5, 1000, "서식지"),
     key_features: text(body.key_features, 5, 1500, "주요 특징"),
     ecological_role: text(body.ecological_role, 5, 1500, "생태계 역할"),

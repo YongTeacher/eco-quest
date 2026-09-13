@@ -26,6 +26,7 @@
   var selectedSpecies;
   var selectedGuideObservation;
   var markerClusterer;
+  var candidatePhotoCache = {};
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -357,6 +358,15 @@
       '</div>';
   }
 
+  function safeExternalUrl(value) {
+    try {
+      var url = new URL(String(value || ""));
+      return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
   function categoryLabel(category) {
     return { plant: "식물", insect: "곤충", bird: "조류", animal: "포유류", water: "양서·파충류·수생생물", fungi: "균류", etc: "기타" }[category] || "미확인";
   }
@@ -402,12 +412,54 @@
   function renderGuides() {
     var grid = document.getElementById("dex-grid");
     var cards = guides.map(function (guide, index) {
-      return '<article class="dex-card complete" tabindex="0"><div class="dex-image"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + '" /><em>NO. ' + String(index + 1).padStart(3, "0") + '</em></div><div class="dex-body"><div><span class="type-chip">' + escapeHtml(categoryLabel(guide.category)) + '</span><span class="verified">작성 완료</span></div><h3>' + escapeHtml(guide.species_name) + '</h3><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p><small>' + formatDate(guide.updated_at) + '</small></div></article>';
+      return '<button class="dex-card complete" type="button" data-guide-index="' + index + '" aria-label="' + escapeHtml(guide.species_name) + ' 생물도감 자세히 보기"><div class="dex-image"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + '" /><em>NO. ' + String(index + 1).padStart(3, "0") + '</em></div><div class="dex-body"><div><span class="type-chip">' + escapeHtml(categoryLabel(guide.category)) + '</span><span class="verified">작성 완료</span></div><h3>' + escapeHtml(guide.species_name) + '</h3><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p><small>' + formatDate(guide.updated_at) + ' · 카드 보기</small></div></button>';
     });
     if (guides.length < dexLimit) cards.push('<button class="empty-dex-card" type="button" data-go="map"><span>＋</span><h3>새 도감 만들기</h3><p>공동 관찰에서 생물을 선택하세요.</p></button>');
     grid.innerHTML = cards.join("");
     updateDexProgress();
   }
+
+  function openGuideCard(guide, index) {
+    var observation = observations.find(function (item) { return item.id === guide.observation_id; }) || {};
+    var placeName = guide.place_name || observation.place_name || "장소 미기록";
+    var sourceUrl = safeExternalUrl(guide.source);
+    var sourceHtml = sourceUrl
+      ? '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(guide.source) + '</a>'
+      : escapeHtml(guide.source || "참고 자료 미기록");
+    var detail = document.getElementById("guide-card-detail");
+    detail.className = "field-guide-infographic card-" + escapeHtml(guide.category || "etc");
+    detail.innerHTML =
+      '<header class="field-guide-card-head"><div><span class="pixel-label">ECO QUEST FIELD CARD</span><h2 id="guide-card-title">' + escapeHtml(guide.species_name) + '</h2><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p></div><div class="field-guide-number"><small>ARCHIVE</small><b>NO. ' + String(index + 1).padStart(3, "0") + '</b></div></header>' +
+      '<div class="field-guide-hero"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + ' 대표 사진" /><span>' + escapeHtml(categoryLabel(guide.category)) + ' · ' + escapeHtml(placeName) + '</span></div>' +
+      '<div class="field-guide-facts">' +
+        '<section class="field-guide-fact"><h3>HABITAT · 서식지</h3><p>' + escapeHtml(guide.habitat || "서식지 미기록") + '</p></section>' +
+        '<section class="field-guide-fact"><h3>KEY FEATURES · 주요 특징</h3><p>' + escapeHtml(guide.key_features || "주요 특징 미기록") + '</p></section>' +
+        '<section class="field-guide-fact full"><h3>ECOLOGICAL ROLE · 생태계 역할</h3><p>' + escapeHtml(guide.ecological_role || "생태계 역할 미기록") + '</p></section>' +
+        '<section class="field-guide-fact full"><h3>FIELD REPORT · 조사 보고서</h3><p>' + escapeHtml(guide.report || "조사 보고서 미기록") + '</p></section>' +
+        '<section class="field-guide-fact full"><h3>SOURCE · 참고 자료</h3><p>' + sourceHtml + '</p></section>' +
+      '</div>' +
+      '<footer class="field-guide-card-foot"><span><b>' + escapeHtml(currentUser.student_name) + '</b> 탐사대원의 개인 생물도감</span><span>' + escapeHtml(formatDate(guide.updated_at)) + ' · 용인삼계고등학교</span></footer>';
+    document.getElementById("guide-card-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("close-guide-card").focus();
+  }
+
+  function closeGuideCard() {
+    document.getElementById("guide-card-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+  }
+
+  document.getElementById("dex-grid").addEventListener("click", function (event) {
+    var card = event.target.closest("[data-guide-index]");
+    if (!card) return;
+    var index = Number(card.dataset.guideIndex);
+    if (guides[index]) openGuideCard(guides[index], index);
+  });
+
+  document.getElementById("close-guide-card").addEventListener("click", closeGuideCard);
+  document.getElementById("guide-card-modal").addEventListener("click", function (event) {
+    if (event.target === this) closeGuideCard();
+  });
 
   function openGuideEditor(observation) {
     var existingGuide = guides.find(function (guide) { return guide.observation_id === observation.id; });
@@ -610,7 +662,8 @@
   });
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Escape") return;
-    if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
+    if (!document.getElementById("guide-card-modal").hidden) closeGuideCard();
+    else if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
   });
   document.getElementById("specific-location-name").addEventListener("input", updatePickerConfirmation);
@@ -794,17 +847,99 @@
 
   function renderCandidates(items) {
     document.getElementById("candidate-list").innerHTML = items.map(function (item, index) {
-      return '<button class="candidate-card" type="button" data-candidate-index="' + index + '" data-name="' + item.name + '" data-scientific="' + item.scientific + '">' +
-        '<span class="rank">0' + (index + 1) + '</span><span class="candidate-icon">' + item.icon + '</span><h4>' + item.name + '</h4><p>' + item.scientific + '</p><small>' + item.clue + '</small><span class="confidence">' + item.confidence + '</span>' +
-      '</button>';
+      return '<article class="candidate-card" tabindex="0" role="button" data-candidate-index="' + index + '" data-name="' + escapeHtml(item.name) + '" data-scientific="' + escapeHtml(item.scientific) + '">' +
+        '<span class="rank">0' + (index + 1) + '</span>' +
+        '<div class="candidate-photo"><span class="candidate-photo-placeholder">' + item.icon + '</span><img data-candidate-image="' + index + '" alt="' + escapeHtml(item.name) + ' 대표 사진" loading="lazy" hidden /></div>' +
+        '<h4>' + escapeHtml(item.name) + '</h4><p>' + escapeHtml(item.scientific) + '</p><small>' + escapeHtml(item.clue) + '</small><span class="confidence">' + escapeHtml(item.confidence) + '</span>' +
+        '<a class="candidate-photo-credit" data-candidate-credit="' + index + '" target="_blank" rel="noopener noreferrer" hidden></a>' +
+      '</article>';
     }).join("");
+    loadCandidatePhotos(items);
+  }
+
+  function candidatePhotoData(photo) {
+    var allowedLicenses = new Set(["cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"]);
+    if (!photo || !photo.license_code || !allowedLicenses.has(String(photo.license_code).toLowerCase())) return null;
+    var imageUrl = photo.medium_url || String(photo.url || "").replace(/\/square\./, "/medium.");
+    if (!imageUrl) return null;
+    return {
+      imageUrl: imageUrl,
+      detailUrl: "https://www.inaturalist.org/photos/" + photo.id,
+      credit: "사진: " + (photo.attribution_name || String(photo.attribution || "").replace(/^\(c\)\s*/i, "").split(",")[0] || "iNaturalist 관찰자") + " · " + photo.license_code.toUpperCase()
+    };
+  }
+
+  function findLicensedObservationPhoto(scientificName) {
+    var licenses = "cc0,cc-by,cc-by-sa,cc-by-nc,cc-by-nc-sa";
+    var endpoint = "https://api.inaturalist.org/v1/observations?taxon_name=" + encodeURIComponent(scientificName) + "&photos=true&photo_license=" + encodeURIComponent(licenses) + "&quality_grade=research&order_by=votes&per_page=1";
+    return window.fetch(endpoint).then(function (response) {
+      if (!response.ok) return null;
+      return response.json();
+    }).then(function (body) {
+      var observation = body && body.results && body.results[0];
+      return candidatePhotoData(observation && observation.photos && observation.photos[0]);
+    }).catch(function () { return null; });
+  }
+
+  function findLicensedTaxonPhoto(scientificName) {
+    if (candidatePhotoCache[scientificName]) return candidatePhotoCache[scientificName];
+    var endpoint = "https://api.inaturalist.org/v1/taxa?q=" + encodeURIComponent(scientificName) + "&rank=species&per_page=10";
+    candidatePhotoCache[scientificName] = window.fetch(endpoint).then(function (response) {
+      if (!response.ok) throw new Error("대표 사진 조회 실패");
+      return response.json();
+    }).then(function (body) {
+      var results = body.results || [];
+      var taxon = results.find(function (item) {
+        return String(item.name || "").toLowerCase() === scientificName.toLowerCase() || String(item.matched_term || "").toLowerCase() === scientificName.toLowerCase();
+      });
+      var photo = taxon && taxon.default_photo;
+      return candidatePhotoData(photo) || findLicensedObservationPhoto(scientificName);
+    }).catch(function () { return null; });
+    return candidatePhotoCache[scientificName];
+  }
+
+  function loadCandidatePhotos(items) {
+    items.forEach(function (item, index) {
+      if (/^(Taxon incertae sedis|Unidentified organism|Manual identification)$/i.test(item.scientific)) return;
+      findLicensedTaxonPhoto(item.scientific).then(function (photo) {
+        if (!photo) return;
+        var card = document.querySelector('.candidate-card[data-candidate-index="' + index + '"]');
+        if (!card || card.dataset.scientific !== item.scientific) return;
+        var image = card.querySelector('[data-candidate-image="' + index + '"]');
+        var credit = card.querySelector('[data-candidate-credit="' + index + '"]');
+        if (!image || !credit) return;
+        image.addEventListener("load", function () {
+          image.hidden = false;
+          var placeholder = image.parentElement.querySelector(".candidate-photo-placeholder");
+          if (placeholder) placeholder.hidden = true;
+        }, { once: true });
+        image.addEventListener("error", function () {
+          credit.hidden = true;
+        }, { once: true });
+        image.src = photo.imageUrl;
+        credit.href = photo.detailUrl;
+        credit.textContent = photo.credit;
+        credit.title = photo.credit + " · iNaturalist에서 사진 정보 보기";
+        credit.hidden = false;
+      });
+    });
   }
 
   document.getElementById("candidate-list").addEventListener("click", function (event) {
+    if (event.target.closest(".candidate-photo-credit")) return;
     var card = event.target.closest(".candidate-card");
     if (!card) return;
     document.querySelectorAll(".candidate-card").forEach(function (item) { item.classList.toggle("selected", item === card); });
     selectSpecies(card.dataset.name, card.dataset.scientific);
+  });
+
+  document.getElementById("candidate-list").addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.target.closest(".candidate-photo-credit")) return;
+    var card = event.target.closest(".candidate-card");
+    if (!card) return;
+    event.preventDefault();
+    card.click();
   });
 
   document.getElementById("manual-identify").addEventListener("click", function () {
