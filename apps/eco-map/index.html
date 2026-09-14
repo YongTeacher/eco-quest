@@ -305,30 +305,46 @@
   <div id="teacher-app" class="teacher-shell" hidden>
     <aside class="teacher-sidebar">
       <div class="mini-brand light"><span class="brand-mark small"><i></i><i></i><i></i><i></i></span><span><b>ECO QUEST</b><small>관리자</small></span></div>
-      <nav><button class="active" type="button">▦ 대시보드</button><button type="button">⌖ 생태지도</button><button type="button">♙ 학생·모둠</button><button type="button">◎ 관찰 기록</button><button type="button">□ 개인 도감</button><button type="button">⚙ 수업 설정</button></nav>
+      <nav><button class="active" type="button" data-teacher-view="dashboard">▦ 대시보드</button><button type="button" data-teacher-unavailable>⌖ 생태지도</button><button type="button" data-teacher-view="roster">♙ 학생·모둠</button><button type="button" data-teacher-unavailable>◎ 관찰 기록</button><button type="button" data-teacher-unavailable>□ 개인 도감</button><button type="button" data-teacher-view="settings">⚙ 수업 설정</button></nav>
       <button id="exit-teacher" class="teacher-exit" type="button">← 관리자 로그아웃</button>
     </aside>
     <main class="teacher-main">
-      <header><div><span class="pixel-label">ADMIN CONSOLE</span><h1>전체 수업 현황</h1><p>1반부터 9반까지의 생태 탐사 진행 상황입니다.</p></div><div class="admin-profile"><span>관리자</span><b>배성용 선생님</b><i>BS</i></div></header>
-      <div class="admin-stats">
-        <article><span>참여 학생</span><b><span id="admin-student-count">0</span><small>명</small></b><em>9개 학급</em></article>
-        <article><span>공동 관찰</span><b><span id="admin-observation-count">0</span><small>건</small></b><em>실시간 저장</em></article>
-        <article><span>완성 도감</span><b><span id="admin-guide-count">0</span><small>개</small></b><em>개인별 기록</em></article>
-        <article class="alert"><span>시트 전송 대기</span><b><span id="admin-sync-count">0</span><small>건</small></b><em>재전송 가능</em></article>
-      </div>
-      <div class="teacher-content-grid">
-        <section class="admin-panel classes-panel"><div class="admin-panel-head"><div><span class="pixel-label">CLASSES</span><h2>학급별 현황</h2></div><button type="button">전체 보기 →</button></div><div id="class-overview" class="class-overview"></div></section>
-        <section class="admin-panel exception-panel"><div class="admin-panel-head"><div><span class="pixel-label">REVIEW QUEUE</span><h2>확인이 필요한 기록</h2></div><span class="count-badge">0</span></div><div class="exception-list"><p class="empty-message">검토 목록 기능은 다음 단계에서 연결됩니다.</p></div></section>
-      </div>
-      <section class="admin-panel roster-panel">
-        <div class="roster-info"><span class="roster-icon">♙</span><div><span class="pixel-label">STUDENT ROSTER</span><h2>학생 사전 명단</h2><p id="roster-status">명단이 비어 있어 현재는 기존 방식으로 로그인합니다.</p></div></div>
-        <div class="roster-import">
-          <label class="roster-file" for="roster-csv"><span>CSV 파일 선택</span><small id="roster-file-name">반, 번호, 이름, 모둠 열이 필요합니다.</small></label>
-          <input id="roster-csv" type="file" accept=".csv,text/csv" hidden />
-          <button id="import-roster" class="admin-primary" type="button" disabled>명단 등록·갱신</button>
+      <header><div><span class="pixel-label">ADMIN CONSOLE</span><h1 id="teacher-page-title">전체 수업 현황</h1><p id="teacher-page-subtitle">1반부터 9반까지의 생태 탐사 진행 상황입니다.</p></div><div class="admin-profile"><span>관리자</span><b>배성용 선생님</b><i>BS</i></div></header>
+      <nav class="teacher-section-tabs" aria-label="교사 관리 메뉴"><button class="active" type="button" data-teacher-view="dashboard">대시보드</button><button type="button" data-teacher-view="roster">학생·모둠</button><button type="button" data-teacher-view="settings">수업 설정</button></nav>
+
+      <section id="teacher-view-dashboard" class="teacher-view">
+        <div class="admin-stats">
+          <article><span>참여 학생</span><b><span id="admin-student-count">0</span><small>명</small></b><em>9개 학급</em></article>
+          <article><span>공동 관찰</span><b><span id="admin-observation-count">0</span><small>건</small></b><em>실시간 저장</em></article>
+          <article><span>완성 도감</span><b><span id="admin-guide-count">0</span><small>개</small></b><em>개인별 기록</em></article>
+          <article class="alert"><span>시트 전송 대기</span><b><span id="admin-sync-count">0</span><small>건</small></b><em>재전송 가능</em></article>
         </div>
+        <div class="teacher-content-grid">
+          <section class="admin-panel classes-panel"><div class="admin-panel-head"><div><span class="pixel-label">CLASSES</span><h2>학급별 현황</h2></div><button type="button" data-teacher-view="roster">명단 보기 →</button></div><div id="class-overview" class="class-overview"></div></section>
+          <section class="admin-panel exception-panel"><div class="admin-panel-head"><div><span class="pixel-label">REVIEW QUEUE</span><h2>확인이 필요한 기록</h2></div><span class="count-badge">0</span></div><div class="exception-list"><p class="empty-message">검토 목록 기능은 다음 단계에서 연결됩니다.</p></div></section>
+        </div>
+        <section class="admin-panel sheets-panel"><div><span class="sheet-icon">▦</span><div><span class="pixel-label">GOOGLE SHEETS</span><h2>마스터 시트 동기화</h2><p>학생 명단, 공동 관찰, 개인 도감과 제출 현황을 선생님의 시트에 반영합니다.</p></div></div><button id="sync-sheets" class="admin-primary" type="button">지금 동기화</button></section>
       </section>
-      <section class="admin-panel sheets-panel"><div><span class="sheet-icon">▦</span><div><span class="pixel-label">GOOGLE SHEETS</span><h2>마스터 시트 동기화</h2><p>학생 명단, 공동 관찰, 개인 도감과 제출 현황을 선생님의 시트에 반영합니다.</p></div></div><button id="sync-sheets" class="admin-primary" type="button">지금 동기화</button></section>
+
+      <section id="teacher-view-roster" class="teacher-view" hidden>
+        <section class="admin-panel roster-table-panel">
+          <div class="admin-panel-head roster-table-head"><div><span class="pixel-label">STUDENTS &amp; GROUPS</span><h2>학생 명단과 모둠 배정</h2><p>모둠을 선택하면 즉시 저장됩니다. 미배정 학생은 로그인할 수 없습니다.</p></div><label>학급<select id="roster-class-filter"><option value="">전체</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label></div>
+          <div class="roster-table-wrap"><table class="roster-table"><thead><tr><th>반</th><th>번호</th><th>이름</th><th>모둠</th><th>가입 상태</th><th>마지막 접속</th></tr></thead><tbody id="roster-list-body"><tr><td colspan="6" class="empty-message">등록된 학생 명단이 없습니다.</td></tr></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="teacher-view-settings" class="teacher-view" hidden>
+        <section class="admin-panel roster-panel settings-roster-panel">
+          <div class="roster-info"><span class="roster-icon">♙</span><div><span class="pixel-label">STUDENT ROSTER</span><h2>학급 CSV 명단 등록</h2><p id="roster-status">명단이 비어 있어 현재는 기존 방식으로 로그인합니다.</p></div></div>
+          <div class="roster-import">
+            <label class="roster-class-select">CSV에 반 열이 없다면 업로드할 반<select id="roster-default-class"><option value="">CSV의 반 열 사용</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label>
+            <label class="roster-file" for="roster-csv"><span>CSV 파일 선택</span><small id="roster-file-name">번호, 이름만 있어도 등록할 수 있습니다.</small></label>
+            <input id="roster-csv" type="file" accept=".csv,text/csv" hidden />
+            <button id="import-roster" class="admin-primary" type="button" disabled>명단 등록·갱신</button>
+          </div>
+        </section>
+        <section class="admin-panel roster-guide-panel"><span class="pixel-label">HOW TO IMPORT</span><h2>CSV 등록 방법</h2><ol><li><b>반별 파일</b>은 위에서 학급을 선택하고 `번호,이름` CSV를 올립니다.</li><li><b>전체 학년 파일</b>은 학급 선택을 비워두고 `반,번호,이름` CSV를 올립니다.</li><li>`모둠` 열이 있으면 함께 등록되고, 없으면 학생·모둠 탭에서 나중에 배정합니다.</li><li>모둠이 배정된 학생만 반·번호·이름·모둠을 입력해 로그인할 수 있습니다.</li></ol><div class="csv-examples"><code>번호,이름<br />1,김학생<br />2,이학생</code><code>반,번호,이름,모둠<br />1,1,김학생,2<br />1,2,이학생,3</code></div></section>
+      </section>
     </main>
   </div>
 

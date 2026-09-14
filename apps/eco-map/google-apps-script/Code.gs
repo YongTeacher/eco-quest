@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.1.0";
+const ECO_QUEST_VERSION = "1.2.0";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -213,9 +213,9 @@ function replaceStudentRoster_(students, now) {
   const sheet = getEcoSpreadsheet_().getSheetByName(ECO_SHEETS.STUDENTS.name);
   if (!sheet) throw new Error(ECO_SHEETS.STUDENTS.name + " 시트가 없습니다. 초기 설정을 다시 실행해 주세요.");
   const values = students.map(function (data) {
-    requireFields_(data, ["student_id", "class_number", "student_number", "student_name", "group_number"]);
+    requireFields_(data, ["student_id", "class_number", "student_number", "student_name"]);
     return [
-      data.student_id, data.class_number, data.student_number, safeCell_(data.student_name), data.group_number,
+      data.student_id, data.class_number, data.student_number, safeCell_(data.student_name), data.group_number || "",
       toDate_(data.created_at), toDate_(data.last_login_at), normalizeGuideLimit_(data.guide_limit),
       safeCell_(data.status || "등록 대기"), now
     ];

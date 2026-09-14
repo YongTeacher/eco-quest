@@ -46,7 +46,10 @@ async function route(context) {
   if (method === "GET" && path === "guides") return listGuides(context, user);
   if (method === "POST" && path === "guides") return createGuide(context, user);
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
+  if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
+  const rosterGroupMatch = path.match(/^admin\/roster\/([0-9a-f-]{36})\/group$/i);
+  if (method === "PATCH" && rosterGroupMatch) return updateRosterGroup(context, user, rosterGroupMatch[1]);
   if (method === "POST" && path === "admin/sync") return retrySheetSync(context, user);
 
   const guideLimitMatch = path.match(/^admin\/students\/([0-9a-f-]{36})\/guide-limit$/i);
@@ -89,8 +92,14 @@ async function studentLogin(context) {
     rosterStudent = await env.ECO_DB.prepare(
       "SELECT * FROM student_roster WHERE class_number = ? AND student_number = ?"
     ).bind(classNumber, studentNumber).first();
-    if (!rosterStudent || rosterStudent.status !== "active" || rosterStudent.normalized_name !== normalizeStudentName(studentName) || Number(rosterStudent.group_number) !== groupNumber) {
+    if (!rosterStudent || rosterStudent.status !== "active" || rosterStudent.normalized_name !== normalizeStudentName(studentName)) {
       return json({ ok: false, error: "사전 등록된 학생 명단과 정보가 일치하지 않습니다. 반·번호·이름·모둠을 다시 확인해 주세요." }, 403);
+    }
+    if (rosterStudent.group_number === null || rosterStudent.group_number === undefined) {
+      return json({ ok: false, error: "아직 모둠이 배정되지 않았습니다. 담당 선생님께 모둠 배정을 요청해 주세요." }, 403);
+    }
+    if (Number(rosterStudent.group_number) !== groupNumber) {
+      return json({ ok: false, error: "사전 등록된 모둠과 입력한 모둠이 다릅니다. 모둠 번호를 다시 확인해 주세요." }, 403);
     }
   }
 
@@ -335,13 +344,25 @@ async function createGuide(context, user) {
 
 async function ensureRosterSchema(env) {
   if (!rosterSchemaPromise) {
-    rosterSchemaPromise = env.ECO_DB.batch([
-      env.ECO_DB.prepare(
-        "CREATE TABLE IF NOT EXISTS student_roster (id TEXT PRIMARY KEY, class_number INTEGER NOT NULL CHECK (class_number BETWEEN 1 AND 9), student_number INTEGER NOT NULL CHECK (student_number BETWEEN 1 AND 99), student_name TEXT NOT NULL, normalized_name TEXT NOT NULL, group_number INTEGER NOT NULL CHECK (group_number BETWEEN 1 AND 20), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (class_number, student_number))"
-      ),
-      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_class ON student_roster(class_number, student_number)"),
-      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_status ON student_roster(status)")
-    ]).catch(function (error) {
+    rosterSchemaPromise = (async function () {
+      await env.ECO_DB.prepare(
+        "CREATE TABLE IF NOT EXISTS student_roster (id TEXT PRIMARY KEY, class_number INTEGER NOT NULL CHECK (class_number BETWEEN 1 AND 9), student_number INTEGER NOT NULL CHECK (student_number BETWEEN 1 AND 99), student_name TEXT NOT NULL, normalized_name TEXT NOT NULL, group_number INTEGER CHECK (group_number IS NULL OR group_number BETWEEN 1 AND 20), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (class_number, student_number))"
+      ).run();
+      const columns = await env.ECO_DB.prepare("PRAGMA table_info(student_roster)").all();
+      const groupColumn = columns.results.find(function (column) { return column.name === "group_number"; });
+      if (groupColumn && Number(groupColumn.notnull) === 1) {
+        await env.ECO_DB.batch([
+          env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS student_roster_next (id TEXT PRIMARY KEY, class_number INTEGER NOT NULL CHECK (class_number BETWEEN 1 AND 9), student_number INTEGER NOT NULL CHECK (student_number BETWEEN 1 AND 99), student_name TEXT NOT NULL, normalized_name TEXT NOT NULL, group_number INTEGER CHECK (group_number IS NULL OR group_number BETWEEN 1 AND 20), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (class_number, student_number))"),
+          env.ECO_DB.prepare("INSERT OR REPLACE INTO student_roster_next (id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at) SELECT id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at FROM student_roster"),
+          env.ECO_DB.prepare("DROP TABLE student_roster"),
+          env.ECO_DB.prepare("ALTER TABLE student_roster_next RENAME TO student_roster")
+        ]);
+      }
+      await env.ECO_DB.batch([
+        env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_class ON student_roster(class_number, student_number)"),
+        env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_status ON student_roster(status)")
+      ]);
+    }()).catch(function (error) {
       rosterSchemaPromise = null;
       throw error;
     });
@@ -364,7 +385,7 @@ function rosterSheetStudent(row, activeStudent) {
     class_number: Number(row.class_number),
     student_number: Number(row.student_number),
     student_name: row.student_name,
-    group_number: Number(row.group_number),
+    group_number: row.group_number === null || row.group_number === undefined ? "" : Number(row.group_number),
     guide_limit: activeStudent ? Number(activeStudent.guide_limit || 3) : 3,
     status: row.status === "disabled" ? "중지" : activeStudent ? "활동" : "등록 대기",
     created_at: row.created_at,
@@ -387,7 +408,8 @@ async function importRoster(context, user) {
     const classNumber = integer(item.class_number, 1, 9, rowNumber + "행 반");
     const studentNumber = integer(item.student_number, 1, 99, rowNumber + "행 번호");
     const studentName = text(item.student_name, 2, 30, rowNumber + "행 이름");
-    const groupNumber = integer(item.group_number, 1, 20, rowNumber + "행 모둠");
+    const rawGroupNumber = String(item.group_number === undefined || item.group_number === null ? "" : item.group_number).trim();
+    const groupNumber = rawGroupNumber ? integer(rawGroupNumber, 1, 20, rowNumber + "행 모둠") : null;
     const key = classNumber + ":" + studentNumber;
     if (seen.has(key)) throw new HttpError(400, rowNumber + "행에 중복된 반·번호가 있습니다.");
     seen.add(key);
@@ -421,9 +443,11 @@ async function importRoster(context, user) {
       "INSERT INTO student_roster (id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(class_number, student_number) DO UPDATE SET student_name = excluded.student_name, normalized_name = excluded.normalized_name, group_number = excluded.group_number, status = excluded.status, updated_at = excluded.updated_at"
     ).bind(row.id, row.class_number, row.student_number, row.student_name, row.normalized_name, row.group_number, row.status, row.created_at, row.updated_at));
     if (previousStudent) {
-      statements.push(env.ECO_DB.prepare(
-        "UPDATE students SET student_name = ?, group_number = ?, status = ?, updated_at = ? WHERE id = ?"
-      ).bind(row.student_name, row.group_number, row.status, now, previousStudent.id));
+      statements.push(row.group_number === null
+        ? env.ECO_DB.prepare("UPDATE students SET student_name = ?, status = ?, updated_at = ? WHERE id = ?")
+          .bind(row.student_name, row.status, now, previousStudent.id)
+        : env.ECO_DB.prepare("UPDATE students SET student_name = ?, group_number = ?, status = ?, updated_at = ? WHERE id = ?")
+          .bind(row.student_name, row.group_number, row.status, now, previousStudent.id));
     }
   });
   statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student'"));
@@ -447,15 +471,73 @@ async function importRoster(context, user) {
   });
 }
 
+async function listRoster({ request, env }, user) {
+  requireTeacher(user);
+  await ensureRosterSchema(env);
+  const url = new URL(request.url);
+  const classValue = url.searchParams.get("class");
+  const classNumber = classValue ? integer(classValue, 1, 9, "반") : null;
+  const where = classNumber ? " WHERE r.class_number = ?" : "";
+  const statement = env.ECO_DB.prepare(
+    "SELECT r.*, CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS registered, s.last_login_at, COALESCE(s.guide_limit, 3) AS guide_limit FROM student_roster r LEFT JOIN students s ON s.class_number = r.class_number AND s.student_number = r.student_number" + where + " ORDER BY r.class_number, r.student_number LIMIT 500"
+  );
+  const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
+  return json({
+    ok: true,
+    students: result.results.map(function (row) {
+      return {
+        id: row.id,
+        class_number: Number(row.class_number),
+        student_number: Number(row.student_number),
+        student_name: row.student_name,
+        group_number: row.group_number === null || row.group_number === undefined ? null : Number(row.group_number),
+        status: row.status,
+        registered: Boolean(row.registered),
+        last_login_at: row.last_login_at || "",
+        guide_limit: Number(row.guide_limit || 3)
+      };
+    })
+  });
+}
+
+async function updateRosterGroup(context, user, rosterId) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureRosterSchema(env);
+  const body = await readJson(request);
+  const groupNumber = integer(body.group_number, 1, 20, "모둠");
+  const rosterStudent = await env.ECO_DB.prepare("SELECT * FROM student_roster WHERE id = ?").bind(rosterId).first();
+  if (!rosterStudent) return json({ ok: false, error: "학생 명단을 찾을 수 없습니다." }, 404);
+  const now = new Date().toISOString();
+  const activeStudent = await env.ECO_DB.prepare(
+    "SELECT * FROM students WHERE class_number = ? AND student_number = ?"
+  ).bind(rosterStudent.class_number, rosterStudent.student_number).first();
+  const statements = [
+    env.ECO_DB.prepare("UPDATE student_roster SET group_number = ?, updated_at = ? WHERE id = ?").bind(groupNumber, now, rosterId)
+  ];
+  if (activeStudent) {
+    statements.push(env.ECO_DB.prepare("UPDATE students SET group_number = ?, updated_at = ? WHERE id = ?").bind(groupNumber, now, activeStudent.id));
+    statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student' AND student_id = ?").bind(activeStudent.id));
+  }
+  await env.ECO_DB.batch(statements);
+  const updatedRoster = { ...rosterStudent, group_number: groupNumber, updated_at: now };
+  const updatedStudent = activeStudent ? { ...activeStudent, group_number: groupNumber, updated_at: now } : null;
+  const sync = makeSyncEvent("student.upsert", rosterId, rosterSheetStudent(updatedRoster, updatedStudent));
+  await putSyncEvent(env.ECO_DB, sync);
+  context.waitUntil(syncSheetEvent(env, sync));
+  return json({ ok: true, student: { id: rosterId, group_number: groupNumber } });
+}
+
 async function adminOverview({ env }, user) {
   requireTeacher(user);
   await ensureRosterSchema(env);
-  const [students, observations, guides, pending, roster] = await Promise.all([
+  const [students, observations, guides, pending, roster, unassigned] = await Promise.all([
     env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM students WHERE status = 'active' GROUP BY class_number").all(),
     env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM observations GROUP BY class_number").all(),
     env.ECO_DB.prepare("SELECT st.class_number, COUNT(*) AS count FROM field_guides g JOIN students st ON st.id = g.student_id WHERE g.status = '완료' GROUP BY st.class_number").all(),
     env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM sheet_sync_queue WHERE status != 'synced'").first(),
-    env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM student_roster WHERE status = 'active' GROUP BY class_number").all()
+    env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM student_roster WHERE status = 'active' GROUP BY class_number").all(),
+    env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM student_roster WHERE status = 'active' AND group_number IS NULL").first()
   ]);
   const classes = Array.from({ length: 9 }, function (_, index) {
     const classNumber = index + 1;
@@ -468,7 +550,7 @@ async function adminOverview({ env }, user) {
     };
   });
   const rosterCount = classes.reduce(function (sum, item) { return sum + item.roster; }, 0);
-  return json({ ok: true, classes, roster_count: rosterCount, roster_enabled: rosterCount > 0, pending_sync: Number(pending.count || 0) });
+  return json({ ok: true, classes, roster_count: rosterCount, roster_enabled: rosterCount > 0, unassigned_count: Number(unassigned.count || 0), pending_sync: Number(pending.count || 0) });
 }
 
 async function updateGuideLimit(context, user, studentId) {

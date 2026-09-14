@@ -31,6 +31,8 @@
   var guideCardMarker;
   var guideCardMapRequest = 0;
   var pendingRosterRows = [];
+  var pendingRosterText = "";
+  var rosterStudents = [];
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -112,6 +114,7 @@
     loginScreen.hidden = true;
     studentApp.hidden = true;
     teacherApp.hidden = false;
+    setTeacherView("dashboard");
     loadAdminOverview();
     window.scrollTo(0, 0);
   }
@@ -133,6 +136,25 @@
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (name === "map") window.setTimeout(ensureKakaoMap, 0);
+  }
+
+  function setTeacherView(name) {
+    var labels = {
+      dashboard: ["전체 수업 현황", "1반부터 9반까지의 생태 탐사 진행 상황입니다."],
+      roster: ["학생·모둠 관리", "등록된 학생을 확인하고 모둠 번호를 직접 배정할 수 있습니다."],
+      settings: ["수업 설정", "학급 CSV 명단을 등록하고 로그인 준비 상태를 확인합니다."]
+    };
+    var selected = labels[name] ? name : "dashboard";
+    document.querySelectorAll(".teacher-view").forEach(function (view) {
+      view.hidden = view.id !== "teacher-view-" + selected;
+    });
+    document.querySelectorAll("[data-teacher-view]").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.teacherView === selected);
+    });
+    document.getElementById("teacher-page-title").textContent = labels[selected][0];
+    document.getElementById("teacher-page-subtitle").textContent = labels[selected][1];
+    if (selected === "roster") loadRoster();
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   document.getElementById("login-form").addEventListener("submit", function (event) {
@@ -1151,23 +1173,36 @@
     return index;
   }
 
-  function parseRosterCsv(text) {
+  function parseRosterCsv(text, defaultClass) {
     var rows = parseCsvRows(text);
     if (rows.length < 2) throw new Error("제목 행과 학생 정보가 들어 있는 CSV가 필요합니다.");
     var headers = rows[0].map(normalizeCsvHeader);
     var columns = {
-      class_number: findCsvColumn(headers, ["반", "학급", "class", "classnumber"], true),
-      student_number: findCsvColumn(headers, ["번호", "출석번호", "number", "studentnumber"], true),
+      class_number: findCsvColumn(headers, ["반", "학급", "class", "classnumber"], false),
+      student_number: findCsvColumn(headers, ["번호", "출석번호", "학번", "number", "studentnumber"], true),
       student_name: findCsvColumn(headers, ["이름", "성명", "학생이름", "name", "studentname"], true),
-      group_number: findCsvColumn(headers, ["모둠", "모둠번호", "조", "group", "groupnumber"], true),
+      group_number: findCsvColumn(headers, ["모둠", "모둠번호", "조", "group", "groupnumber"], false),
       status: findCsvColumn(headers, ["상태", "status"], false)
     };
+    var compoundSchoolNumber = headers[columns.student_number] === "학번";
+    if (columns.class_number < 0 && !defaultClass && !compoundSchoolNumber) throw new Error("CSV에 반 열이 없습니다. 위에서 업로드할 반을 선택해 주세요.");
     var students = rows.slice(1).map(function (row) {
+      var rawStudentNumber = String(row[columns.student_number] || "").trim();
+      var classNumber = columns.class_number < 0 ? String(defaultClass || "") : String(row[columns.class_number] || "").trim();
+      var studentNumber = rawStudentNumber;
+      if (compoundSchoolNumber && /^\d{3,6}$/.test(rawStudentNumber) && Number(rawStudentNumber) > 99) {
+        studentNumber = String(Number(rawStudentNumber.slice(-2)));
+        if (!classNumber) {
+          var classDigits = rawStudentNumber.slice(0, -2);
+          if (classDigits.length > 1) classDigits = classDigits.slice(1);
+          classNumber = String(Number(classDigits));
+        }
+      }
       return {
-        class_number: String(row[columns.class_number] || "").trim(),
-        student_number: String(row[columns.student_number] || "").trim(),
+        class_number: classNumber,
+        student_number: studentNumber,
         student_name: String(row[columns.student_name] || "").trim(),
-        group_number: String(row[columns.group_number] || "").trim(),
+        group_number: columns.group_number < 0 ? "" : String(row[columns.group_number] || "").trim(),
         status: columns.status < 0 ? "활동" : String(row[columns.status] || "활동").trim()
       };
     }).filter(function (student) {
@@ -1178,21 +1213,32 @@
     return students;
   }
 
-  document.getElementById("roster-csv").addEventListener("change", function () {
-    var file = this.files && this.files[0];
+  function prepareRosterFile() {
+    var fileInput = document.getElementById("roster-csv");
+    var file = fileInput.files && fileInput.files[0];
     pendingRosterRows = [];
     document.getElementById("import-roster").disabled = true;
     if (!file) return;
     document.getElementById("roster-file-name").textContent = file.name + " 읽는 중…";
-    file.text().then(function (text) {
-      pendingRosterRows = parseRosterCsv(text);
+    var readPromise = pendingRosterText ? Promise.resolve(pendingRosterText) : file.text();
+    readPromise.then(function (text) {
+      pendingRosterText = text;
+      pendingRosterRows = parseRosterCsv(text, document.getElementById("roster-default-class").value);
+      var unassigned = pendingRosterRows.filter(function (student) { return !student.group_number; }).length;
       document.getElementById("roster-file-name").textContent = file.name + " · " + pendingRosterRows.length + "명 확인";
+      if (unassigned) document.getElementById("roster-file-name").textContent += " · 모둠 미배정 " + unassigned + "명";
       document.getElementById("import-roster").disabled = false;
     }).catch(function (error) {
       document.getElementById("roster-file-name").textContent = "CSV 형식을 확인해 주세요.";
       showToast(error.message);
     });
+  }
+
+  document.getElementById("roster-csv").addEventListener("change", function () {
+    pendingRosterText = "";
+    prepareRosterFile();
   });
+  document.getElementById("roster-default-class").addEventListener("change", prepareRosterFile);
 
   document.getElementById("import-roster").addEventListener("click", function () {
     if (!pendingRosterRows.length) return;
@@ -1206,14 +1252,80 @@
     }).then(function (result) {
       showToast(result.imported + "명을 등록했습니다. 이제 사전 명단 확인 로그인이 적용됩니다.");
       pendingRosterRows = [];
+      pendingRosterText = "";
       document.getElementById("roster-csv").value = "";
-      document.getElementById("roster-file-name").textContent = "반, 번호, 이름, 모둠 열이 필요합니다.";
+      document.getElementById("roster-file-name").textContent = "번호, 이름만 있어도 등록할 수 있습니다.";
       loadAdminOverview();
+      setTeacherView("roster");
     }).catch(function (error) {
       showToast(error.message);
       button.disabled = false;
     }).finally(function () {
       button.textContent = "명단 등록·갱신";
+    });
+  });
+
+  function rosterGroupOptions(selectedGroup) {
+    var options = '<option value=""' + (selectedGroup ? ' disabled' : ' selected disabled') + '>미배정</option>';
+    for (var group = 1; group <= 20; group += 1) {
+      options += '<option value="' + group + '"' + (Number(selectedGroup) === group ? ' selected' : '') + '>' + group + '모둠</option>';
+    }
+    return options;
+  }
+
+  function renderRoster() {
+    var body = document.getElementById("roster-list-body");
+    if (!rosterStudents.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty-message">선택한 범위에 등록된 학생이 없습니다.</td></tr>';
+      return;
+    }
+    body.innerHTML = rosterStudents.map(function (student) {
+      var stateClass = student.registered ? "joined" : "waiting";
+      var stateText = student.status !== "active" ? "이용 중지" : student.registered ? "가입 완료" : student.group_number ? "가입 전" : "모둠 미배정";
+      return '<tr data-roster-id="' + escapeHtml(student.id) + '">' +
+        '<td>' + student.class_number + '반</td><td>' + student.student_number + '번</td><td><b>' + escapeHtml(student.student_name) + '</b></td>' +
+        '<td><select class="roster-group-select" data-current-group="' + escapeHtml(student.group_number || "") + '" aria-label="' + escapeHtml(student.student_name) + ' 모둠 선택">' + rosterGroupOptions(student.group_number) + '</select><small class="roster-save-state"></small></td>' +
+        '<td><span class="roster-state ' + stateClass + '">' + stateText + '</span></td><td>' + escapeHtml(student.last_login_at ? formatDate(student.last_login_at) : "-") + '</td></tr>';
+    }).join("");
+  }
+
+  function loadRoster() {
+    var classNumber = document.getElementById("roster-class-filter").value;
+    api("admin/roster" + (classNumber ? "?class=" + encodeURIComponent(classNumber) : "")).then(function (result) {
+      rosterStudents = result.students || [];
+      renderRoster();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  document.getElementById("roster-class-filter").addEventListener("change", loadRoster);
+  document.getElementById("roster-list-body").addEventListener("change", function (event) {
+    var select = event.target.closest(".roster-group-select");
+    if (!select || !select.value) return;
+    var row = select.closest("[data-roster-id]");
+    var saveState = row.querySelector(".roster-save-state");
+    var previousGroup = select.dataset.currentGroup;
+    select.disabled = true;
+    saveState.textContent = "저장 중…";
+    api("admin/roster/" + encodeURIComponent(row.dataset.rosterId) + "/group", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_number: select.value })
+    }).then(function () {
+      select.dataset.currentGroup = select.value;
+      saveState.textContent = "저장 완료";
+      var student = rosterStudents.find(function (item) { return item.id === row.dataset.rosterId; });
+      if (student) student.group_number = Number(select.value);
+      window.setTimeout(function () { saveState.textContent = ""; }, 1600);
+      loadAdminOverview();
+    }).catch(function (error) {
+      select.value = previousGroup;
+      saveState.textContent = "저장 실패";
+      showToast(error.message);
+    }).finally(function () {
+      select.disabled = false;
     });
   });
 
@@ -1230,7 +1342,7 @@
       var rosterStatus = document.getElementById("roster-status");
       rosterStatus.classList.toggle("enabled", Boolean(result.roster_enabled));
       rosterStatus.textContent = result.roster_enabled
-        ? "사전 명단 " + result.roster_count + "명 등록 · 명단과 일치하는 학생만 로그인할 수 있습니다."
+        ? "사전 명단 " + result.roster_count + "명 등록 · 모둠 미배정 " + result.unassigned_count + "명"
         : "명단이 비어 있어 현재는 기존 방식으로 로그인합니다.";
       document.getElementById("class-overview").innerHTML = classes.map(function (item) {
         return '<div class="class-cell"><div><b>' + item.class_number + '반</b><span>' + item.students + ' / ' + item.roster + '명</span></div><p>참여 / 명단 · 관찰 ' + item.observations + '건 · 도감 ' + item.guides + '개</p></div>';
@@ -1256,12 +1368,13 @@
     });
   });
 
-  document.querySelectorAll(".teacher-sidebar nav button").forEach(function (button) {
+  document.querySelectorAll("[data-teacher-view]").forEach(function (button) {
     button.addEventListener("click", function () {
-      document.querySelectorAll(".teacher-sidebar nav button").forEach(function (item) { item.classList.remove("active"); });
-      button.classList.add("active");
-      if (button.textContent.indexOf("대시보드") === -1) showToast("세부 관리 화면은 다음 단계에서 연결됩니다.");
+      if (!teacherApp.hidden) setTeacherView(button.dataset.teacherView);
     });
+  });
+  document.querySelectorAll("[data-teacher-unavailable]").forEach(function (button) {
+    button.addEventListener("click", function () { showToast("이 관리 화면은 다음 단계에서 연결됩니다."); });
   });
 
   restoreSession();
