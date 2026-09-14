@@ -33,6 +33,7 @@
   var pendingRosterRows = [];
   var pendingRosterText = "";
   var rosterStudents = [];
+  var qrPreviousFocus;
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -156,6 +157,47 @@
     if (selected === "roster") loadRoster();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  function openLoginQr() {
+    qrPreviousFocus = document.activeElement;
+    document.getElementById("login-qr-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("close-login-qr").focus();
+  }
+
+  function closeLoginQr() {
+    document.getElementById("login-qr-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+    if (qrPreviousFocus && typeof qrPreviousFocus.focus === "function") qrPreviousFocus.focus();
+  }
+
+  document.getElementById("open-login-qr").addEventListener("click", openLoginQr);
+  document.getElementById("close-login-qr").addEventListener("click", closeLoginQr);
+  document.getElementById("login-qr-modal").addEventListener("click", function (event) {
+    if (event.target === this) closeLoginQr();
+  });
+  document.getElementById("copy-login-qr").addEventListener("click", function () {
+    var button = this;
+    if (!navigator.clipboard || !("ClipboardItem" in window)) {
+      showToast("이 브라우저에서는 이미지 복사를 지원하지 않습니다. QR 다운로드를 이용해 주세요.");
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "이미지 복사 중…";
+    window.fetch("./login-qr-large.png").then(function (response) {
+      if (!response.ok) throw new Error("QR 이미지를 불러오지 못했습니다.");
+      return response.blob();
+    }).then(function (blob) {
+      return navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    }).then(function () {
+      showToast("QR 이미지를 클립보드에 복사했습니다.");
+    }).catch(function () {
+      showToast("이미지 복사가 차단되었습니다. QR 다운로드를 이용해 주세요.");
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "▣ 이미지 복사";
+    });
+  });
 
   document.getElementById("login-form").addEventListener("submit", function (event) {
     event.preventDefault();
@@ -743,7 +785,8 @@
   });
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Escape") return;
-    if (!document.getElementById("guide-card-modal").hidden) closeGuideCard();
+    if (!document.getElementById("login-qr-modal").hidden) closeLoginQr();
+    else if (!document.getElementById("guide-card-modal").hidden) closeGuideCard();
     else if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
   });

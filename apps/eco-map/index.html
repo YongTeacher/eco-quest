@@ -13,23 +13,10 @@
 
   <main id="login-screen" class="login-screen">
     <section class="login-visual" aria-hidden="true">
-      <div class="sky-orb"></div>
-      <div class="pixel-cloud cloud-a"></div>
-      <div class="pixel-cloud cloud-b"></div>
-      <div class="school-scene">
-        <span class="tree tree-a">♣</span>
-        <span class="tree tree-b">♣</span>
-        <div class="school-building">
-          <div class="school-sign">우리 학교</div>
-          <div class="windows"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        </div>
-        <span class="creature butterfly">◆</span>
-        <span class="creature bird">⌁</span>
-      </div>
       <div class="visual-copy">
-        <p class="pixel-label">SCHOOL ECO WORLD</p>
-        <h1>걸어서 발견하고,<br />함께 완성하는 생태도감</h1>
-        <p>우리 마을의 작은 생명들이 수업의 기록이 됩니다.</p>
+        <p class="pixel-label">우리 학교 생태 탐사 프로젝트</p>
+        <h1>생태월드</h1>
+        <p>걸어서 발견하고, 함께 완성하는 생태도감</p>
       </div>
     </section>
 
@@ -71,10 +58,10 @@
 
         <div class="login-divider"><span>또는</span></div>
         <button id="teacher-preview" class="secondary-button" type="button">교사 관리자 로그인</button>
-        <a class="login-qr" href="https://eco-quest.bsy0708.workers.dev/" target="_blank" rel="noopener" aria-label="생태월드 로그인 페이지 새 창에서 열기">
-          <img src="./login-qr.svg" alt="생태월드 로그인 페이지 QR 코드" width="88" height="88" />
-          <span><b>휴대폰으로 바로 접속</b><small>카메라로 QR코드를 찍으면<br />로그인 화면이 열립니다.</small></span>
-        </a>
+        <button id="open-login-qr" class="login-qr" type="button" aria-haspopup="dialog" aria-controls="login-qr-modal">
+          <img src="./login-qr-large.png" alt="" width="104" height="104" />
+          <span><b>휴대폰으로 바로 접속</b><small>QR코드를 누르면 크게 보고<br />다운로드·이미지 복사할 수 있습니다.</small><em>크게 보기 ＋</em></span>
+        </button>
       </div>
       <p class="privacy-note">수업 코드가 있는 학생과 담당 교사만 지도를 볼 수 있습니다.</p>
     </section>
@@ -359,6 +346,15 @@
         <section class="admin-panel roster-guide-panel"><span class="pixel-label">HOW TO IMPORT</span><h2>나이스 출석부 명렬표 등록 방법</h2><ol><li>나이스에서 교과목의 <b>출석부 명렬표 CSV</b>를 내려받습니다.</li><li><b>학생·모둠 탭</b>에서 파일을 선택하면 `반`, `번호`, `이름` 열을 자동으로 찾아 명단을 만듭니다.</li><li>CSV에 반 열이 없는 경우에만 업로드할 학급을 직접 선택합니다.</li><li>명단 등록 뒤 `1팀 - 1,2,4,6` 형식으로 팀을 일괄 배정합니다.</li><li>모둠이 배정된 학생만 반·번호·이름·모둠을 입력해 로그인할 수 있습니다.</li></ol><div class="csv-examples"><code>반,번호,이름<br />1,1,김학생<br />1,2,이학생</code><code>1팀 - 1,2,4,6<br />2팀 - 3,5,7,8<br />3팀 - 9,10,11,12</code></div></section>
       </section>
     </main>
+  </div>
+
+  <div id="login-qr-modal" class="qr-modal" role="dialog" aria-modal="true" aria-labelledby="login-qr-title" hidden>
+    <section class="qr-modal-card">
+      <header><div><span class="pixel-label">MOBILE LOGIN</span><h2 id="login-qr-title">생태월드 QR 접속</h2><p>휴대폰 카메라로 QR코드를 비추세요.</p></div><button id="close-login-qr" class="modal-close" type="button" aria-label="QR코드 크게 보기 닫기">×</button></header>
+      <div class="qr-modal-image"><img src="./login-qr-large.png" alt="생태월드 로그인 주소 QR 코드" width="720" height="720" /></div>
+      <p class="qr-address">eco-quest.bsy0708.workers.dev</p>
+      <div class="qr-modal-actions"><a class="secondary-button" href="./login-qr-large.png" download="생태월드-로그인-QR.png">↓ QR 다운로드</a><button id="copy-login-qr" class="primary-button" type="button">▣ 이미지 복사</button></div>
+    </section>
   </div>
 
   <div id="location-picker-modal" class="location-picker-modal" role="dialog" aria-modal="true" aria-labelledby="location-picker-title" hidden>
