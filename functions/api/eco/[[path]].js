@@ -2,6 +2,7 @@ const COOKIE_NAME = "eco_session";
 const SESSION_SECONDS = 60 * 60 * 10;
 const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
+let rosterSchemaPromise;
 const PHOTO_TYPES = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -45,6 +46,7 @@ async function route(context) {
   if (method === "GET" && path === "guides") return listGuides(context, user);
   if (method === "POST" && path === "guides") return createGuide(context, user);
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
+  if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/sync") return retrySheetSync(context, user);
 
   const guideLimitMatch = path.match(/^admin\/students\/([0-9a-f-]{36})\/guide-limit$/i);
@@ -69,6 +71,7 @@ function health(env) {
 async function studentLogin(context) {
   const { request, env } = context;
   requireBindings(env, ["ECO_DB", "ECO_CLASS_CODE", "ECO_AUTH_PEPPER"]);
+  await ensureRosterSchema(env);
   const body = await readJson(request);
   const classNumber = integer(body.class_number, 1, 9, "반");
   const studentNumber = integer(body.student_number, 1, 99, "번호");
@@ -78,6 +81,17 @@ async function studentLogin(context) {
   if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: "PIN은 숫자 4자리로 입력해 주세요." }, 400);
   if (!(await secretsEqual(String(body.class_code || ""), env.ECO_CLASS_CODE))) {
     return json({ ok: false, error: "수업 코드가 올바르지 않습니다." }, 401);
+  }
+
+  const rosterCount = await env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM student_roster").first();
+  let rosterStudent = null;
+  if (Number(rosterCount.count || 0) > 0) {
+    rosterStudent = await env.ECO_DB.prepare(
+      "SELECT * FROM student_roster WHERE class_number = ? AND student_number = ?"
+    ).bind(classNumber, studentNumber).first();
+    if (!rosterStudent || rosterStudent.status !== "active" || rosterStudent.normalized_name !== normalizeStudentName(studentName) || Number(rosterStudent.group_number) !== groupNumber) {
+      return json({ ok: false, error: "사전 등록된 학생 명단과 정보가 일치하지 않습니다. 반·번호·이름·모둠을 다시 확인해 주세요." }, 403);
+    }
   }
 
   const now = new Date().toISOString();
@@ -91,20 +105,24 @@ async function studentLogin(context) {
     if (!(await secretsEqual(pinHash, student.pin_hash))) {
       return json({ ok: false, error: "PIN이 올바르지 않습니다." }, 401);
     }
+    const canonicalName = rosterStudent ? rosterStudent.student_name : student.student_name;
+    const canonicalGroup = rosterStudent ? Number(rosterStudent.group_number) : groupNumber;
     await env.ECO_DB.prepare(
-      "UPDATE students SET group_number = ?, last_login_at = ?, updated_at = ? WHERE id = ?"
-    ).bind(groupNumber, now, now, student.id).run();
-    student = { ...student, group_number: groupNumber, last_login_at: now, updated_at: now };
+      "UPDATE students SET student_name = ?, group_number = ?, last_login_at = ?, updated_at = ? WHERE id = ?"
+    ).bind(canonicalName, canonicalGroup, now, now, student.id).run();
+    student = { ...student, student_name: canonicalName, group_number: canonicalGroup, last_login_at: now, updated_at: now };
   } else {
-    const id = crypto.randomUUID();
+    const id = rosterStudent ? rosterStudent.id : crypto.randomUUID();
+    const canonicalName = rosterStudent ? rosterStudent.student_name : studentName;
+    const canonicalGroup = rosterStudent ? Number(rosterStudent.group_number) : groupNumber;
     const salt = randomHex(16);
     const pinHash = await hashPin(pin, salt, env.ECO_AUTH_PEPPER);
     await env.ECO_DB.prepare(
       "INSERT INTO students (id, class_number, student_number, student_name, group_number, pin_salt, pin_hash, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(id, classNumber, studentNumber, studentName, groupNumber, salt, pinHash, now, now, now).run();
+    ).bind(id, classNumber, studentNumber, canonicalName, canonicalGroup, salt, pinHash, now, now, now).run();
     student = {
-      id, class_number: classNumber, student_number: studentNumber, student_name: studentName,
-      group_number: groupNumber, guide_limit: 3, status: "active", created_at: now,
+      id, class_number: classNumber, student_number: studentNumber, student_name: canonicalName,
+      group_number: canonicalGroup, guide_limit: 3, status: "active", created_at: now,
       updated_at: now, last_login_at: now
     };
   }
@@ -315,24 +333,142 @@ async function createGuide(context, user) {
   return json({ ok: true, guide: data }, existing ? 200 : 201);
 }
 
+async function ensureRosterSchema(env) {
+  if (!rosterSchemaPromise) {
+    rosterSchemaPromise = env.ECO_DB.batch([
+      env.ECO_DB.prepare(
+        "CREATE TABLE IF NOT EXISTS student_roster (id TEXT PRIMARY KEY, class_number INTEGER NOT NULL CHECK (class_number BETWEEN 1 AND 9), student_number INTEGER NOT NULL CHECK (student_number BETWEEN 1 AND 99), student_name TEXT NOT NULL, normalized_name TEXT NOT NULL, group_number INTEGER NOT NULL CHECK (group_number BETWEEN 1 AND 20), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (class_number, student_number))"
+      ),
+      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_class ON student_roster(class_number, student_number)"),
+      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_student_roster_status ON student_roster(status)")
+    ]).catch(function (error) {
+      rosterSchemaPromise = null;
+      throw error;
+    });
+  }
+  await rosterSchemaPromise;
+}
+
+function normalizeStudentName(value) {
+  return String(value || "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+}
+
+function normalizeRosterStatus(value) {
+  const status = String(value || "활동").trim().toLocaleLowerCase("ko-KR");
+  return ["disabled", "inactive", "중지", "비활성", "전학", "제외"].includes(status) ? "disabled" : "active";
+}
+
+function rosterSheetStudent(row, activeStudent) {
+  return {
+    student_id: row.id,
+    class_number: Number(row.class_number),
+    student_number: Number(row.student_number),
+    student_name: row.student_name,
+    group_number: Number(row.group_number),
+    guide_limit: activeStudent ? Number(activeStudent.guide_limit || 3) : 3,
+    status: row.status === "disabled" ? "중지" : activeStudent ? "활동" : "등록 대기",
+    created_at: row.created_at,
+    last_login_at: activeStudent ? activeStudent.last_login_at : ""
+  };
+}
+
+async function importRoster(context, user) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureRosterSchema(env);
+  const body = await readJson(request);
+  if (!Array.isArray(body.students) || body.students.length < 1 || body.students.length > 500) {
+    return json({ ok: false, error: "학생 명단은 한 번에 1~500명까지 등록할 수 있습니다." }, 400);
+  }
+
+  const seen = new Set();
+  const imported = body.students.map(function (item, index) {
+    const rowNumber = index + 2;
+    const classNumber = integer(item.class_number, 1, 9, rowNumber + "행 반");
+    const studentNumber = integer(item.student_number, 1, 99, rowNumber + "행 번호");
+    const studentName = text(item.student_name, 2, 30, rowNumber + "행 이름");
+    const groupNumber = integer(item.group_number, 1, 20, rowNumber + "행 모둠");
+    const key = classNumber + ":" + studentNumber;
+    if (seen.has(key)) throw new HttpError(400, rowNumber + "행에 중복된 반·번호가 있습니다.");
+    seen.add(key);
+    return {
+      class_number: classNumber,
+      student_number: studentNumber,
+      student_name: studentName,
+      normalized_name: normalizeStudentName(studentName),
+      group_number: groupNumber,
+      status: normalizeRosterStatus(item.status)
+    };
+  });
+
+  const [currentRoster, currentStudents] = await Promise.all([
+    env.ECO_DB.prepare("SELECT * FROM student_roster").all(),
+    env.ECO_DB.prepare("SELECT * FROM students").all()
+  ]);
+  const rosterByKey = new Map(currentRoster.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
+  const studentByKey = new Map(currentStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
+  const now = new Date().toISOString();
+  const statements = [];
+  imported.forEach(function (row) {
+    const key = row.class_number + ":" + row.student_number;
+    const previousRoster = rosterByKey.get(key);
+    const previousStudent = studentByKey.get(key);
+    const id = previousRoster ? previousRoster.id : previousStudent ? previousStudent.id : crypto.randomUUID();
+    row.id = id;
+    row.created_at = previousRoster ? previousRoster.created_at : previousStudent ? previousStudent.created_at : now;
+    row.updated_at = now;
+    statements.push(env.ECO_DB.prepare(
+      "INSERT INTO student_roster (id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(class_number, student_number) DO UPDATE SET student_name = excluded.student_name, normalized_name = excluded.normalized_name, group_number = excluded.group_number, status = excluded.status, updated_at = excluded.updated_at"
+    ).bind(row.id, row.class_number, row.student_number, row.student_name, row.normalized_name, row.group_number, row.status, row.created_at, row.updated_at));
+    if (previousStudent) {
+      statements.push(env.ECO_DB.prepare(
+        "UPDATE students SET student_name = ?, group_number = ?, status = ?, updated_at = ? WHERE id = ?"
+      ).bind(row.student_name, row.group_number, row.status, now, previousStudent.id));
+    }
+  });
+  statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student'"));
+  await env.ECO_DB.batch(statements);
+
+  const fullRoster = await env.ECO_DB.prepare("SELECT * FROM student_roster ORDER BY class_number, student_number").all();
+  const activeByKey = new Map(currentStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
+  const sheetRows = fullRoster.results.map(function (row) {
+    return rosterSheetStudent(row, activeByKey.get(row.class_number + ":" + row.student_number));
+  });
+  const sync = makeSyncEvent("roster.replace", "student-roster", { students: sheetRows });
+  await putSyncEvent(env.ECO_DB, sync);
+  context.waitUntil(syncSheetEvent(env, sync));
+
+  return json({
+    ok: true,
+    imported: imported.length,
+    roster_count: fullRoster.results.length,
+    roster_enabled: fullRoster.results.length > 0,
+    sheet_sync_queued: true
+  });
+}
+
 async function adminOverview({ env }, user) {
   requireTeacher(user);
-  const [students, observations, guides, pending] = await Promise.all([
+  await ensureRosterSchema(env);
+  const [students, observations, guides, pending, roster] = await Promise.all([
     env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM students WHERE status = 'active' GROUP BY class_number").all(),
     env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM observations GROUP BY class_number").all(),
     env.ECO_DB.prepare("SELECT st.class_number, COUNT(*) AS count FROM field_guides g JOIN students st ON st.id = g.student_id WHERE g.status = '완료' GROUP BY st.class_number").all(),
-    env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM sheet_sync_queue WHERE status != 'synced'").first()
+    env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM sheet_sync_queue WHERE status != 'synced'").first(),
+    env.ECO_DB.prepare("SELECT class_number, COUNT(*) AS count FROM student_roster WHERE status = 'active' GROUP BY class_number").all()
   ]);
   const classes = Array.from({ length: 9 }, function (_, index) {
     const classNumber = index + 1;
     return {
       class_number: classNumber,
+      roster: countFor(roster.results, classNumber),
       students: countFor(students.results, classNumber),
       observations: countFor(observations.results, classNumber),
       guides: countFor(guides.results, classNumber)
     };
   });
-  return json({ ok: true, classes, pending_sync: Number(pending.count || 0) });
+  const rosterCount = classes.reduce(function (sum, item) { return sum + item.roster; }, 0);
+  return json({ ok: true, classes, roster_count: rosterCount, roster_enabled: rosterCount > 0, pending_sync: Number(pending.count || 0) });
 }
 
 async function updateGuideLimit(context, user, studentId) {

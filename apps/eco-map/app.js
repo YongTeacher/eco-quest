@@ -30,6 +30,7 @@
   var guideCardMap;
   var guideCardMarker;
   var guideCardMapRequest = 0;
+  var pendingRosterRows = [];
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -1102,6 +1103,120 @@
     }
   }
 
+  function parseCsvRows(text) {
+    var rows = [];
+    var row = [];
+    var value = "";
+    var quoted = false;
+    for (var index = 0; index < text.length; index += 1) {
+      var character = text[index];
+      if (quoted) {
+        if (character === '"' && text[index + 1] === '"') {
+          value += '"';
+          index += 1;
+        } else if (character === '"') {
+          quoted = false;
+        } else {
+          value += character;
+        }
+      } else if (character === '"') {
+        quoted = true;
+      } else if (character === ",") {
+        row.push(value);
+        value = "";
+      } else if (character === "\n") {
+        row.push(value.replace(/\r$/, ""));
+        rows.push(row);
+        row = [];
+        value = "";
+      } else {
+        value += character;
+      }
+    }
+    if (quoted) throw new Error("CSV의 따옴표가 올바르게 닫히지 않았습니다.");
+    if (value || row.length) {
+      row.push(value.replace(/\r$/, ""));
+      rows.push(row);
+    }
+    return rows.filter(function (item) { return item.some(function (cell) { return String(cell).trim(); }); });
+  }
+
+  function normalizeCsvHeader(value) {
+    return String(value || "").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  }
+
+  function findCsvColumn(headers, aliases, required) {
+    var index = headers.findIndex(function (header) { return aliases.includes(header); });
+    if (required && index < 0) throw new Error(aliases[0] + " 열을 찾을 수 없습니다.");
+    return index;
+  }
+
+  function parseRosterCsv(text) {
+    var rows = parseCsvRows(text);
+    if (rows.length < 2) throw new Error("제목 행과 학생 정보가 들어 있는 CSV가 필요합니다.");
+    var headers = rows[0].map(normalizeCsvHeader);
+    var columns = {
+      class_number: findCsvColumn(headers, ["반", "학급", "class", "classnumber"], true),
+      student_number: findCsvColumn(headers, ["번호", "출석번호", "number", "studentnumber"], true),
+      student_name: findCsvColumn(headers, ["이름", "성명", "학생이름", "name", "studentname"], true),
+      group_number: findCsvColumn(headers, ["모둠", "모둠번호", "조", "group", "groupnumber"], true),
+      status: findCsvColumn(headers, ["상태", "status"], false)
+    };
+    var students = rows.slice(1).map(function (row) {
+      return {
+        class_number: String(row[columns.class_number] || "").trim(),
+        student_number: String(row[columns.student_number] || "").trim(),
+        student_name: String(row[columns.student_name] || "").trim(),
+        group_number: String(row[columns.group_number] || "").trim(),
+        status: columns.status < 0 ? "활동" : String(row[columns.status] || "활동").trim()
+      };
+    }).filter(function (student) {
+      return student.class_number || student.student_number || student.student_name || student.group_number;
+    });
+    if (!students.length) throw new Error("등록할 학생 정보가 없습니다.");
+    if (students.length > 500) throw new Error("한 번에 등록할 수 있는 학생은 최대 500명입니다.");
+    return students;
+  }
+
+  document.getElementById("roster-csv").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    pendingRosterRows = [];
+    document.getElementById("import-roster").disabled = true;
+    if (!file) return;
+    document.getElementById("roster-file-name").textContent = file.name + " 읽는 중…";
+    file.text().then(function (text) {
+      pendingRosterRows = parseRosterCsv(text);
+      document.getElementById("roster-file-name").textContent = file.name + " · " + pendingRosterRows.length + "명 확인";
+      document.getElementById("import-roster").disabled = false;
+    }).catch(function (error) {
+      document.getElementById("roster-file-name").textContent = "CSV 형식을 확인해 주세요.";
+      showToast(error.message);
+    });
+  });
+
+  document.getElementById("import-roster").addEventListener("click", function () {
+    if (!pendingRosterRows.length) return;
+    var button = this;
+    button.disabled = true;
+    button.textContent = "명단 등록 중…";
+    api("admin/roster/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ students: pendingRosterRows })
+    }).then(function (result) {
+      showToast(result.imported + "명을 등록했습니다. 이제 사전 명단 확인 로그인이 적용됩니다.");
+      pendingRosterRows = [];
+      document.getElementById("roster-csv").value = "";
+      document.getElementById("roster-file-name").textContent = "반, 번호, 이름, 모둠 열이 필요합니다.";
+      loadAdminOverview();
+    }).catch(function (error) {
+      showToast(error.message);
+      button.disabled = false;
+    }).finally(function () {
+      button.textContent = "명단 등록·갱신";
+    });
+  });
+
   function loadAdminOverview() {
     api("admin/overview").then(function (result) {
       var classes = result.classes || [];
@@ -1112,8 +1227,13 @@
       document.getElementById("admin-observation-count").textContent = observationTotal;
       document.getElementById("admin-guide-count").textContent = guideTotal;
       document.getElementById("admin-sync-count").textContent = result.pending_sync || 0;
+      var rosterStatus = document.getElementById("roster-status");
+      rosterStatus.classList.toggle("enabled", Boolean(result.roster_enabled));
+      rosterStatus.textContent = result.roster_enabled
+        ? "사전 명단 " + result.roster_count + "명 등록 · 명단과 일치하는 학생만 로그인할 수 있습니다."
+        : "명단이 비어 있어 현재는 기존 방식으로 로그인합니다.";
       document.getElementById("class-overview").innerHTML = classes.map(function (item) {
-        return '<div class="class-cell"><div><b>' + item.class_number + '반</b><span>' + item.students + '</span></div><p>관찰 ' + item.observations + '건 · 도감 ' + item.guides + '개</p></div>';
+        return '<div class="class-cell"><div><b>' + item.class_number + '반</b><span>' + item.students + ' / ' + item.roster + '명</span></div><p>참여 / 명단 · 관찰 ' + item.observations + '건 · 도감 ' + item.guides + '개</p></div>';
       }).join("");
     }).catch(function (error) {
       if (error.status === 401) showLogin();

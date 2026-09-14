@@ -320,6 +320,14 @@
         <section class="admin-panel classes-panel"><div class="admin-panel-head"><div><span class="pixel-label">CLASSES</span><h2>학급별 현황</h2></div><button type="button">전체 보기 →</button></div><div id="class-overview" class="class-overview"></div></section>
         <section class="admin-panel exception-panel"><div class="admin-panel-head"><div><span class="pixel-label">REVIEW QUEUE</span><h2>확인이 필요한 기록</h2></div><span class="count-badge">0</span></div><div class="exception-list"><p class="empty-message">검토 목록 기능은 다음 단계에서 연결됩니다.</p></div></section>
       </div>
+      <section class="admin-panel roster-panel">
+        <div class="roster-info"><span class="roster-icon">♙</span><div><span class="pixel-label">STUDENT ROSTER</span><h2>학생 사전 명단</h2><p id="roster-status">명단이 비어 있어 현재는 기존 방식으로 로그인합니다.</p></div></div>
+        <div class="roster-import">
+          <label class="roster-file" for="roster-csv"><span>CSV 파일 선택</span><small id="roster-file-name">반, 번호, 이름, 모둠 열이 필요합니다.</small></label>
+          <input id="roster-csv" type="file" accept=".csv,text/csv" hidden />
+          <button id="import-roster" class="admin-primary" type="button" disabled>명단 등록·갱신</button>
+        </div>
+      </section>
       <section class="admin-panel sheets-panel"><div><span class="sheet-icon">▦</span><div><span class="pixel-label">GOOGLE SHEETS</span><h2>마스터 시트 동기화</h2><p>학생 명단, 공동 관찰, 개인 도감과 제출 현황을 선생님의 시트에 반영합니다.</p></div></div><button id="sync-sheets" class="admin-primary" type="button">지금 동기화</button></section>
     </main>
   </div>

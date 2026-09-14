@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.0.0";
+const ECO_QUEST_VERSION = "1.1.0";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -156,6 +156,11 @@ function handleEvent_(body) {
   const data = body.data;
 
   switch (body.type) {
+    case "roster.replace":
+      if (!Array.isArray(data.students) || data.students.length < 1) throw new Error("학생 명단이 비어 있습니다.");
+      replaceStudentRoster_(data.students, now);
+      return { id: "student-roster", sheet: ECO_SHEETS.STUDENTS.name, count: data.students.length };
+
     case "student.upsert":
       requireFields_(data, ["student_id", "class_number", "student_number", "student_name"]);
       upsertRow_(ECO_SHEETS.STUDENTS, data.student_id, [
@@ -202,6 +207,23 @@ function handleEvent_(body) {
     default:
       throw new Error("지원하지 않는 이벤트입니다: " + body.type);
   }
+}
+
+function replaceStudentRoster_(students, now) {
+  const sheet = getEcoSpreadsheet_().getSheetByName(ECO_SHEETS.STUDENTS.name);
+  if (!sheet) throw new Error(ECO_SHEETS.STUDENTS.name + " 시트가 없습니다. 초기 설정을 다시 실행해 주세요.");
+  const values = students.map(function (data) {
+    requireFields_(data, ["student_id", "class_number", "student_number", "student_name", "group_number"]);
+    return [
+      data.student_id, data.class_number, data.student_number, safeCell_(data.student_name), data.group_number,
+      toDate_(data.created_at), toDate_(data.last_login_at), normalizeGuideLimit_(data.guide_limit),
+      safeCell_(data.status || "등록 대기"), now
+    ];
+  });
+  const oldRows = Math.max(0, sheet.getLastRow() - 1);
+  if (oldRows) sheet.getRange(2, 1, oldRows, ECO_SHEETS.STUDENTS.headers.length).clearContent();
+  sheet.getRange(2, 1, values.length, ECO_SHEETS.STUDENTS.headers.length).setValues(values);
+  sheet.getRange(2, 2, values.length, 4).setHorizontalAlignment("center");
 }
 
 function prepareDataSheet_(spreadsheet, definition) {
