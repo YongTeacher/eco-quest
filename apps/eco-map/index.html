@@ -327,6 +327,24 @@
       </section>
 
       <section id="teacher-view-roster" class="teacher-view" hidden>
+        <section class="admin-panel roster-panel settings-roster-panel">
+          <div class="roster-info"><span class="roster-icon">♙</span><div><span class="pixel-label">NEIS STUDENT ROSTER</span><h2>나이스 CSV 명단 등록</h2><p id="roster-status">명단이 비어 있어 현재는 기존 방식으로 로그인합니다.</p></div></div>
+          <div class="roster-import">
+            <label class="roster-class-select">CSV에 반 열이 없을 때만 학급 선택<select id="roster-default-class"><option value="">CSV의 반 열 자동 인식</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label>
+            <label class="roster-file" for="roster-csv"><span>나이스 CSV 파일 선택</span><small id="roster-file-name">반·번호·이름 열을 자동으로 찾습니다.</small></label>
+            <input id="roster-csv" type="file" accept=".csv,text/csv" hidden />
+            <button id="import-roster" class="admin-primary" type="button" disabled>명단 등록·갱신</button>
+          </div>
+        </section>
+        <section class="admin-panel team-bulk-panel">
+          <div class="team-bulk-copy"><span class="pixel-label">TEAM SETUP</span><h2>팀 일괄 설정</h2><p>학급을 고른 뒤 한 줄에 한 팀씩 번호를 입력하세요. 명단에 있는 학생에게 자동 반영됩니다.</p></div>
+          <div class="team-bulk-form">
+            <label>학급<select id="team-class-select"><option value="">학급 선택</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label>
+            <label>팀별 학생 번호<textarea id="team-assignments" rows="6" placeholder="1팀 - 1, 2, 4, 6&#10;2팀 - 3, 5, 7, 8&#10;3팀 - 9, 10, 11, 12"></textarea></label>
+            <p id="team-assignment-preview" class="team-assignment-preview">입력한 팀 배정 결과를 저장 전에 확인합니다.</p>
+            <button id="save-team-assignments" class="admin-primary" type="button">팀 배정 저장</button>
+          </div>
+        </section>
         <section class="admin-panel roster-table-panel">
           <div class="admin-panel-head roster-table-head"><div><span class="pixel-label">STUDENTS &amp; GROUPS</span><h2>학생 명단과 모둠 배정</h2><p>모둠을 선택하면 즉시 저장됩니다. 미배정 학생은 로그인할 수 없습니다.</p></div><label>학급<select id="roster-class-filter"><option value="">전체</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label></div>
           <div class="roster-table-wrap"><table class="roster-table"><thead><tr><th>반</th><th>번호</th><th>이름</th><th>모둠</th><th>가입 상태</th><th>마지막 접속</th></tr></thead><tbody id="roster-list-body"><tr><td colspan="6" class="empty-message">등록된 학생 명단이 없습니다.</td></tr></tbody></table></div>
@@ -334,16 +352,7 @@
       </section>
 
       <section id="teacher-view-settings" class="teacher-view" hidden>
-        <section class="admin-panel roster-panel settings-roster-panel">
-          <div class="roster-info"><span class="roster-icon">♙</span><div><span class="pixel-label">STUDENT ROSTER</span><h2>학급 CSV 명단 등록</h2><p id="roster-status">명단이 비어 있어 현재는 기존 방식으로 로그인합니다.</p></div></div>
-          <div class="roster-import">
-            <label class="roster-class-select">CSV에 반 열이 없다면 업로드할 반<select id="roster-default-class"><option value="">CSV의 반 열 사용</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label>
-            <label class="roster-file" for="roster-csv"><span>CSV 파일 선택</span><small id="roster-file-name">번호, 이름만 있어도 등록할 수 있습니다.</small></label>
-            <input id="roster-csv" type="file" accept=".csv,text/csv" hidden />
-            <button id="import-roster" class="admin-primary" type="button" disabled>명단 등록·갱신</button>
-          </div>
-        </section>
-        <section class="admin-panel roster-guide-panel"><span class="pixel-label">HOW TO IMPORT</span><h2>CSV 등록 방법</h2><ol><li><b>반별 파일</b>은 위에서 학급을 선택하고 `번호,이름` CSV를 올립니다.</li><li><b>전체 학년 파일</b>은 학급 선택을 비워두고 `반,번호,이름` CSV를 올립니다.</li><li>`모둠` 열이 있으면 함께 등록되고, 없으면 학생·모둠 탭에서 나중에 배정합니다.</li><li>모둠이 배정된 학생만 반·번호·이름·모둠을 입력해 로그인할 수 있습니다.</li></ol><div class="csv-examples"><code>번호,이름<br />1,김학생<br />2,이학생</code><code>반,번호,이름,모둠<br />1,1,김학생,2<br />1,2,이학생,3</code></div></section>
+        <section class="admin-panel roster-guide-panel"><span class="pixel-label">HOW TO IMPORT</span><h2>나이스 출석부 명렬표 등록 방법</h2><ol><li>나이스에서 교과목의 <b>출석부 명렬표 CSV</b>를 내려받습니다.</li><li><b>학생·모둠 탭</b>에서 파일을 선택하면 `반`, `번호`, `이름` 열을 자동으로 찾아 명단을 만듭니다.</li><li>CSV에 반 열이 없는 경우에만 업로드할 학급을 직접 선택합니다.</li><li>명단 등록 뒤 `1팀 - 1,2,4,6` 형식으로 팀을 일괄 배정합니다.</li><li>모둠이 배정된 학생만 반·번호·이름·모둠을 입력해 로그인할 수 있습니다.</li></ol><div class="csv-examples"><code>반,번호,이름<br />1,1,김학생<br />1,2,이학생</code><code>1팀 - 1,2,4,6<br />2팀 - 3,5,7,8<br />3팀 - 9,10,11,12</code></div></section>
       </section>
     </main>
   </div>

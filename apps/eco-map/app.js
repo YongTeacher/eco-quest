@@ -1173,23 +1173,44 @@
     return index;
   }
 
+  function findRosterHeaderRow(rows) {
+    var numberAliases = ["번호", "출석번호", "순번", "학번", "number", "studentnumber"];
+    var nameAliases = ["이름", "성명", "학생명", "학생이름", "학생성명", "name", "studentname"];
+    for (var index = 0; index < Math.min(rows.length, 30); index += 1) {
+      var headers = rows[index].map(normalizeCsvHeader);
+      if (headers.some(function (header) { return numberAliases.includes(header); }) && headers.some(function (header) { return nameAliases.includes(header); })) return index;
+    }
+    return -1;
+  }
+
+  function csvInteger(value, mode) {
+    var raw = String(value || "").trim();
+    var classMatch = raw.match(/(\d+)\s*반/);
+    if (mode === "class" && classMatch) return String(Number(classMatch[1]));
+    if (mode === "class" && /^\d+\s*(?:-|학년)\s*\d+$/.test(raw)) return String(Number(raw.match(/(\d+)$/)[1]));
+    var match = raw.match(/\d+/);
+    return match ? String(Number(match[0])) : raw;
+  }
+
   function parseRosterCsv(text, defaultClass) {
     var rows = parseCsvRows(text);
     if (rows.length < 2) throw new Error("제목 행과 학생 정보가 들어 있는 CSV가 필요합니다.");
-    var headers = rows[0].map(normalizeCsvHeader);
+    var headerRow = findRosterHeaderRow(rows);
+    if (headerRow < 0) throw new Error("나이스 CSV에서 번호와 이름 열을 찾지 못했습니다.");
+    var headers = rows[headerRow].map(normalizeCsvHeader);
     var columns = {
-      class_number: findCsvColumn(headers, ["반", "학급", "class", "classnumber"], false),
-      student_number: findCsvColumn(headers, ["번호", "출석번호", "학번", "number", "studentnumber"], true),
-      student_name: findCsvColumn(headers, ["이름", "성명", "학생이름", "name", "studentname"], true),
+      class_number: findCsvColumn(headers, ["반", "학급", "학급명", "반명", "class", "classnumber"], false),
+      student_number: findCsvColumn(headers, ["번호", "출석번호", "순번", "학번", "number", "studentnumber"], true),
+      student_name: findCsvColumn(headers, ["이름", "성명", "학생명", "학생이름", "학생성명", "name", "studentname"], true),
       group_number: findCsvColumn(headers, ["모둠", "모둠번호", "조", "group", "groupnumber"], false),
       status: findCsvColumn(headers, ["상태", "status"], false)
     };
     var compoundSchoolNumber = headers[columns.student_number] === "학번";
     if (columns.class_number < 0 && !defaultClass && !compoundSchoolNumber) throw new Error("CSV에 반 열이 없습니다. 위에서 업로드할 반을 선택해 주세요.");
-    var students = rows.slice(1).map(function (row) {
+    var students = rows.slice(headerRow + 1).map(function (row) {
       var rawStudentNumber = String(row[columns.student_number] || "").trim();
-      var classNumber = columns.class_number < 0 ? String(defaultClass || "") : String(row[columns.class_number] || "").trim();
-      var studentNumber = rawStudentNumber;
+      var classNumber = columns.class_number < 0 ? String(defaultClass || "") : csvInteger(row[columns.class_number], "class");
+      var studentNumber = csvInteger(rawStudentNumber, "number");
       if (compoundSchoolNumber && /^\d{3,6}$/.test(rawStudentNumber) && Number(rawStudentNumber) > 99) {
         studentNumber = String(Number(rawStudentNumber.slice(-2)));
         if (!classNumber) {
@@ -1206,11 +1227,41 @@
         status: columns.status < 0 ? "활동" : String(row[columns.status] || "활동").trim()
       };
     }).filter(function (student) {
-      return student.class_number || student.student_number || student.student_name || student.group_number;
+      return Number(student.class_number) >= 1 && Number(student.class_number) <= 9 && Number(student.student_number) >= 1 && Number(student.student_number) <= 99 && student.student_name;
     });
     if (!students.length) throw new Error("등록할 학생 정보가 없습니다.");
     if (students.length > 500) throw new Error("한 번에 등록할 수 있는 학생은 최대 500명입니다.");
     return students;
+  }
+
+  function readRosterFile(file) {
+    return file.arrayBuffer().then(function (buffer) {
+      var bytes = new Uint8Array(buffer);
+      var utf8;
+      try {
+        utf8 = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch (_error) {
+        utf8 = "";
+      }
+      var candidates = [];
+      if (utf8) candidates.push(utf8);
+      try {
+        var korean = new TextDecoder("euc-kr").decode(bytes);
+        if (!candidates.includes(korean)) candidates.push(korean);
+      } catch (_error) {
+        // 오래된 브라우저에서는 UTF-8 CSV만 지원합니다.
+      }
+      var lastError;
+      for (var index = 0; index < candidates.length; index += 1) {
+        try {
+          parseRosterCsv(candidates[index], document.getElementById("roster-default-class").value);
+          return candidates[index];
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error("CSV 파일을 읽을 수 없습니다.");
+    });
   }
 
   function prepareRosterFile() {
@@ -1220,7 +1271,7 @@
     document.getElementById("import-roster").disabled = true;
     if (!file) return;
     document.getElementById("roster-file-name").textContent = file.name + " 읽는 중…";
-    var readPromise = pendingRosterText ? Promise.resolve(pendingRosterText) : file.text();
+    var readPromise = pendingRosterText ? Promise.resolve(pendingRosterText) : readRosterFile(file);
     readPromise.then(function (text) {
       pendingRosterText = text;
       pendingRosterRows = parseRosterCsv(text, document.getElementById("roster-default-class").value);
@@ -1243,6 +1294,7 @@
   document.getElementById("import-roster").addEventListener("click", function () {
     if (!pendingRosterRows.length) return;
     var button = this;
+    var importedClasses = Array.from(new Set(pendingRosterRows.map(function (student) { return String(student.class_number); })));
     button.disabled = true;
     button.textContent = "명단 등록 중…";
     api("admin/roster/import", {
@@ -1254,7 +1306,11 @@
       pendingRosterRows = [];
       pendingRosterText = "";
       document.getElementById("roster-csv").value = "";
-      document.getElementById("roster-file-name").textContent = "번호, 이름만 있어도 등록할 수 있습니다.";
+      document.getElementById("roster-file-name").textContent = "반·번호·이름 열을 자동으로 찾습니다.";
+      if (importedClasses.length === 1) {
+        document.getElementById("roster-class-filter").value = importedClasses[0];
+        document.getElementById("team-class-select").value = importedClasses[0];
+      }
       loadAdminOverview();
       setTeacherView("roster");
     }).catch(function (error) {
@@ -1291,16 +1347,97 @@
 
   function loadRoster() {
     var classNumber = document.getElementById("roster-class-filter").value;
-    api("admin/roster" + (classNumber ? "?class=" + encodeURIComponent(classNumber) : "")).then(function (result) {
+    return api("admin/roster" + (classNumber ? "?class=" + encodeURIComponent(classNumber) : "")).then(function (result) {
       rosterStudents = result.students || [];
       renderRoster();
+      updateTeamAssignmentPreview();
     }).catch(function (error) {
       if (error.status === 401) showLogin();
       showToast(error.message);
     });
   }
 
-  document.getElementById("roster-class-filter").addEventListener("change", loadRoster);
+
+  function parseTeamAssignments(value) {
+    var lines = String(value || "").split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+    if (!lines.length) throw new Error("팀별 학생 번호를 입력해 주세요.");
+    var seen = new Set();
+    var assignments = [];
+    lines.forEach(function (line, index) {
+      var match = line.match(/^(\d+)\s*(?:팀|모둠|조)?\s*[-:=：]\s*(.+)$/);
+      if (!match) throw new Error((index + 1) + "번째 줄을 `1팀 - 1,2,4,6` 형식으로 입력해 주세요.");
+      var groupNumber = Number(match[1]);
+      if (groupNumber < 1 || groupNumber > 20) throw new Error("팀 번호는 1~20 사이여야 합니다.");
+      var numbers = match[2].split(/[,，\s]+/).filter(Boolean).map(Number);
+      if (!numbers.length || numbers.some(function (number) { return !Number.isInteger(number) || number < 1 || number > 99; })) {
+        throw new Error((index + 1) + "번째 줄의 학생 번호를 확인해 주세요.");
+      }
+      numbers.forEach(function (studentNumber) {
+        if (seen.has(studentNumber)) throw new Error(studentNumber + "번 학생이 두 팀 이상에 중복되었습니다.");
+        seen.add(studentNumber);
+        assignments.push({ student_number: studentNumber, group_number: groupNumber });
+      });
+    });
+    return assignments;
+  }
+
+  function updateTeamAssignmentPreview() {
+    var preview = document.getElementById("team-assignment-preview");
+    var classNumber = document.getElementById("team-class-select").value;
+    var input = document.getElementById("team-assignments").value.trim();
+    preview.className = "team-assignment-preview";
+    if (!input) {
+      preview.textContent = "예: 1팀 - 1,2,4,6 (한 줄에 한 팀씩 입력)";
+      return null;
+    }
+    try {
+      var assignments = parseTeamAssignments(input);
+      var rosterNumbers = new Set(rosterStudents.map(function (student) { return Number(student.student_number); }));
+      var missing = classNumber ? assignments.filter(function (item) { return !rosterNumbers.has(item.student_number); }).map(function (item) { return item.student_number; }) : [];
+      if (!classNumber) throw new Error("먼저 학급을 선택해 주세요.");
+      if (missing.length) throw new Error(classNumber + "반 명단에 없는 번호: " + missing.join(", ") + "번");
+      var unlisted = rosterStudents.filter(function (student) { return !assignments.some(function (item) { return item.student_number === Number(student.student_number); }); }).length;
+      preview.textContent = assignments.length + "명 배정 준비 완료" + (unlisted ? " · 미기재 " + unlisted + "명은 기존 팀 유지" : " · 학급 전원 포함");
+      preview.classList.add("ready");
+      return assignments;
+    } catch (error) {
+      preview.textContent = error.message;
+      preview.classList.add("error");
+      return null;
+    }
+  }
+
+  document.getElementById("team-class-select").addEventListener("change", function () {
+    document.getElementById("roster-class-filter").value = this.value;
+    loadRoster();
+  });
+  document.getElementById("team-assignments").addEventListener("input", updateTeamAssignmentPreview);
+  document.getElementById("save-team-assignments").addEventListener("click", function () {
+    var classNumber = document.getElementById("team-class-select").value;
+    var assignments = updateTeamAssignmentPreview();
+    if (!assignments) return;
+    var button = this;
+    button.disabled = true;
+    button.textContent = "팀 배정 저장 중…";
+    api("admin/roster/groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ class_number: classNumber, assignments: assignments })
+    }).then(function (result) {
+      showToast(result.class_number + "반 " + result.updated + "명의 팀을 저장했습니다.");
+      return Promise.all([loadRoster(), loadAdminOverview()]);
+    }).catch(function (error) {
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "팀 배정 저장";
+    });
+  });
+
+  document.getElementById("roster-class-filter").addEventListener("change", function () {
+    document.getElementById("team-class-select").value = this.value;
+    loadRoster();
+  });
   document.getElementById("roster-list-body").addEventListener("change", function (event) {
     var select = event.target.closest(".roster-group-select");
     if (!select || !select.value) return;

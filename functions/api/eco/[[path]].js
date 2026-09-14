@@ -48,6 +48,7 @@ async function route(context) {
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
+  if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
   const rosterGroupMatch = path.match(/^admin\/roster\/([0-9a-f-]{36})\/group$/i);
   if (method === "PATCH" && rosterGroupMatch) return updateRosterGroup(context, user, rosterGroupMatch[1]);
   if (method === "POST" && path === "admin/sync") return retrySheetSync(context, user);
@@ -86,7 +87,7 @@ async function studentLogin(context) {
     return json({ ok: false, error: "수업 코드가 올바르지 않습니다." }, 401);
   }
 
-  const rosterCount = await env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM student_roster").first();
+  const rosterCount = await env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM student_roster WHERE class_number = ? AND status = 'active'").bind(classNumber).first();
   let rosterStudent = null;
   if (Number(rosterCount.count || 0) > 0) {
     rosterStudent = await env.ECO_DB.prepare(
@@ -436,6 +437,9 @@ async function importRoster(context, user) {
     const previousRoster = rosterByKey.get(key);
     const previousStudent = studentByKey.get(key);
     const id = previousRoster ? previousRoster.id : previousStudent ? previousStudent.id : crypto.randomUUID();
+    if (row.group_number === null && previousRoster && previousRoster.group_number !== null && previousRoster.group_number !== undefined) {
+      row.group_number = Number(previousRoster.group_number);
+    }
     row.id = id;
     row.created_at = previousRoster ? previousRoster.created_at : previousStudent ? previousStudent.created_at : now;
     row.updated_at = now;
@@ -453,8 +457,11 @@ async function importRoster(context, user) {
   statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student'"));
   await env.ECO_DB.batch(statements);
 
-  const fullRoster = await env.ECO_DB.prepare("SELECT * FROM student_roster ORDER BY class_number, student_number").all();
-  const activeByKey = new Map(currentStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
+  const [fullRoster, latestStudents] = await Promise.all([
+    env.ECO_DB.prepare("SELECT * FROM student_roster ORDER BY class_number, student_number").all(),
+    env.ECO_DB.prepare("SELECT * FROM students").all()
+  ]);
+  const activeByKey = new Map(latestStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
   const sheetRows = fullRoster.results.map(function (row) {
     return rosterSheetStudent(row, activeByKey.get(row.class_number + ":" + row.student_number));
   });
@@ -526,6 +533,66 @@ async function updateRosterGroup(context, user, rosterId) {
   await putSyncEvent(env.ECO_DB, sync);
   context.waitUntil(syncSheetEvent(env, sync));
   return json({ ok: true, student: { id: rosterId, group_number: groupNumber } });
+}
+
+async function updateRosterGroups(context, user) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureRosterSchema(env);
+  const body = await readJson(request);
+  const classNumber = integer(body.class_number, 1, 9, "반");
+  if (!Array.isArray(body.assignments) || body.assignments.length < 1 || body.assignments.length > 99) {
+    return json({ ok: false, error: "팀 배정 학생은 한 번에 1~99명까지 저장할 수 있습니다." }, 400);
+  }
+
+  const seen = new Set();
+  const assignments = body.assignments.map(function (item, index) {
+    const studentNumber = integer(item.student_number, 1, 99, (index + 1) + "번째 학생 번호");
+    const groupNumber = integer(item.group_number, 1, 20, (index + 1) + "번째 팀");
+    if (seen.has(studentNumber)) throw new HttpError(400, studentNumber + "번 학생이 두 팀 이상에 중복되었습니다.");
+    seen.add(studentNumber);
+    return { student_number: studentNumber, group_number: groupNumber };
+  });
+
+  const rosterResult = await env.ECO_DB.prepare(
+    "SELECT * FROM student_roster WHERE class_number = ? AND status = 'active' ORDER BY student_number"
+  ).bind(classNumber).all();
+  const rosterByNumber = new Map(rosterResult.results.map(function (row) { return [Number(row.student_number), row]; }));
+  const missing = assignments.filter(function (item) { return !rosterByNumber.has(item.student_number); }).map(function (item) { return item.student_number; });
+  if (missing.length) {
+    return json({ ok: false, error: classNumber + "반 명단에 없는 번호가 있습니다: " + missing.join(", ") + "번" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const statements = [];
+  assignments.forEach(function (item) {
+    statements.push(env.ECO_DB.prepare(
+      "UPDATE student_roster SET group_number = ?, updated_at = ? WHERE class_number = ? AND student_number = ?"
+    ).bind(item.group_number, now, classNumber, item.student_number));
+    statements.push(env.ECO_DB.prepare(
+      "UPDATE students SET group_number = ?, updated_at = ? WHERE class_number = ? AND student_number = ?"
+    ).bind(item.group_number, now, classNumber, item.student_number));
+  });
+  statements.push(env.ECO_DB.prepare(
+    "DELETE FROM sessions WHERE role = 'student' AND student_id IN (SELECT id FROM students WHERE class_number = ?)"
+  ).bind(classNumber));
+  for (let index = 0; index < statements.length; index += 75) {
+    await env.ECO_DB.batch(statements.slice(index, index + 75));
+  }
+
+  const [fullRoster, activeStudents] = await Promise.all([
+    env.ECO_DB.prepare("SELECT * FROM student_roster ORDER BY class_number, student_number").all(),
+    env.ECO_DB.prepare("SELECT * FROM students").all()
+  ]);
+  const activeByKey = new Map(activeStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
+  const sheetRows = fullRoster.results.map(function (row) {
+    return rosterSheetStudent(row, activeByKey.get(row.class_number + ":" + row.student_number));
+  });
+  const sync = makeSyncEvent("roster.replace", "student-roster", { students: sheetRows });
+  await putSyncEvent(env.ECO_DB, sync);
+  context.waitUntil(syncSheetEvent(env, sync));
+
+  return json({ ok: true, updated: assignments.length, class_number: classNumber, sheet_sync_queued: true });
 }
 
 async function adminOverview({ env }, user) {
