@@ -176,7 +176,7 @@
     }).then(function (result) {
       currentUser = result.user;
       showStudent("home");
-      showToast(currentUser.class_number + "반 ECO QUEST에 입장했습니다.");
+      showToast(currentUser.class_number + "반 생태월드에 입장했습니다.");
     }).catch(function (error) {
       showToast(error.message);
     }).finally(function () {
@@ -505,7 +505,7 @@
     var detail = document.getElementById("guide-card-detail");
     detail.className = "field-guide-infographic card-" + escapeHtml(guide.category || "etc");
     detail.innerHTML =
-      '<header class="field-guide-card-head"><div><span class="pixel-label">ECO QUEST FIELD CARD</span><h2 id="guide-card-title">' + escapeHtml(guide.species_name) + '</h2><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p></div><div class="field-guide-number"><small>ARCHIVE</small><b>NO. ' + String(index + 1).padStart(3, "0") + '</b></div></header>' +
+      '<header class="field-guide-card-head"><div><span class="pixel-label">생태월드 FIELD CARD</span><h2 id="guide-card-title">' + escapeHtml(guide.species_name) + '</h2><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p></div><div class="field-guide-number"><small>ARCHIVE</small><b>NO. ' + String(index + 1).padStart(3, "0") + '</b></div></header>' +
       '<div class="field-guide-hero"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + ' 대표 사진" /><span>' + escapeHtml(categoryLabel(guide.category)) + ' · ' + escapeHtml(placeName) + '</span></div>' +
       '<section class="field-guide-location"><div class="field-guide-location-head"><div><h3>DISCOVERY MAP · 발견 위치</h3><p>⌖ ' + escapeHtml(placeName) + '</p></div>' + (kakaoMapUrl ? '<a href="' + escapeHtml(kakaoMapUrl) + '" target="_blank" rel="noopener noreferrer">카카오맵에서 크게 보기 ↗</a>' : '') + '</div><div class="field-guide-location-map-wrap"><div id="guide-location-map" class="field-guide-location-map" aria-label="' + escapeHtml(placeName) + ' 발견 위치 지도"></div><div id="guide-location-map-loading" class="field-guide-location-map-loading">발견 위치 지도를 불러오는 중입니다…</div></div></section>' +
       '<div class="field-guide-facts">' +

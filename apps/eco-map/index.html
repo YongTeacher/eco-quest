@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#173f35" />
-  <meta name="description" content="사진과 위치로 우리 마을의 생물을 기록하고 함께 완성하는 수업용 생태지도" />
-  <title>ECO QUEST — 우리 마을 생태지도</title>
+  <meta name="description" content="우리 학교 주변의 생명을 발견하고 기록하는 생태 탐사 프로젝트" />
+  <title>생태월드 — 우리 학교 생태 탐사 프로젝트</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -27,7 +27,7 @@
         <span class="creature bird">⌁</span>
       </div>
       <div class="visual-copy">
-        <p class="pixel-label">FIELD ARCHIVE 01</p>
+        <p class="pixel-label">SCHOOL ECO WORLD</p>
         <h1>걸어서 발견하고,<br />함께 완성하는 생태도감</h1>
         <p>우리 마을의 작은 생명들이 수업의 기록이 됩니다.</p>
       </div>
@@ -36,7 +36,7 @@
     <section class="login-panel">
       <a class="brand" href="https://gamifyclass.pages.dev/apps" aria-label="GAMIFY CLASS 앱 목록으로 이동">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <span><b>ECO QUEST</b><small>우리 마을 생태지도</small></span>
+        <span><b>생태월드</b><small>우리 학교 생태 탐사 프로젝트</small></span>
       </a>
 
       <div class="login-card">
@@ -71,6 +71,10 @@
 
         <div class="login-divider"><span>또는</span></div>
         <button id="teacher-preview" class="secondary-button" type="button">교사 관리자 로그인</button>
+        <a class="login-qr" href="https://eco-quest.bsy0708.workers.dev/" target="_blank" rel="noopener" aria-label="생태월드 로그인 페이지 새 창에서 열기">
+          <img src="./login-qr.svg" alt="생태월드 로그인 페이지 QR 코드" width="88" height="88" />
+          <span><b>휴대폰으로 바로 접속</b><small>카메라로 QR코드를 찍으면<br />로그인 화면이 열립니다.</small></span>
+        </a>
       </div>
       <p class="privacy-note">수업 코드가 있는 학생과 담당 교사만 지도를 볼 수 있습니다.</p>
     </section>
@@ -80,7 +84,7 @@
     <header class="app-header">
       <button class="mini-brand" type="button" data-go="home" aria-label="홈으로 이동">
         <span class="brand-mark small" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <span><b>ECO QUEST</b><small>우리 마을 생태지도</small></span>
+        <span><b>생태월드</b><small>우리 학교 생태 탐사 프로젝트</small></span>
       </button>
       <div class="header-tools">
         <span id="student-class-badge" class="class-badge">-반 · -모둠</span>
@@ -304,7 +308,7 @@
 
   <div id="teacher-app" class="teacher-shell" hidden>
     <aside class="teacher-sidebar">
-      <div class="mini-brand light"><span class="brand-mark small"><i></i><i></i><i></i><i></i></span><span><b>ECO QUEST</b><small>관리자</small></span></div>
+      <div class="mini-brand light"><span class="brand-mark small"><i></i><i></i><i></i><i></i></span><span><b>생태월드</b><small>교사 관리자</small></span></div>
       <nav><button class="active" type="button" data-teacher-view="dashboard">▦ 대시보드</button><button type="button" data-teacher-unavailable>⌖ 생태지도</button><button type="button" data-teacher-view="roster">♙ 학생·모둠</button><button type="button" data-teacher-unavailable>◎ 관찰 기록</button><button type="button" data-teacher-unavailable>□ 개인 도감</button><button type="button" data-teacher-view="settings">⚙ 수업 설정</button></nav>
       <button id="exit-teacher" class="teacher-exit" type="button">← 관리자 로그아웃</button>
     </aside>
