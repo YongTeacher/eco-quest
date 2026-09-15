@@ -31,7 +31,6 @@
   var guideCardMarker;
   var guideCardMapRequest = 0;
   var pendingRosterRows = [];
-  var pendingRosterText = "";
   var rosterStudents = [];
   var qrPreviousFocus;
 
@@ -1235,11 +1234,12 @@
     return match ? String(Number(match[0])) : raw;
   }
 
-  function parseRosterCsv(text, defaultClass) {
-    var rows = parseCsvRows(text);
-    if (rows.length < 2) throw new Error("제목 행과 학생 정보가 들어 있는 CSV가 필요합니다.");
+  function parseRosterRows(rows, defaultClass, sourceLabel) {
+    rows = rows.filter(function (item) { return item.some(function (cell) { return String(cell).trim(); }); });
+    var label = sourceLabel || "명단 파일";
+    if (rows.length < 2) throw new Error(label + "에 제목 행과 학생 정보가 필요합니다.");
     var headerRow = findRosterHeaderRow(rows);
-    if (headerRow < 0) throw new Error("나이스 CSV에서 번호와 이름 열을 찾지 못했습니다.");
+    if (headerRow < 0) throw new Error(label + "에서 번호와 이름 열을 찾지 못했습니다.");
     var headers = rows[headerRow].map(normalizeCsvHeader);
     var columns = {
       class_number: findCsvColumn(headers, ["반", "학급", "학급명", "반명", "class", "classnumber"], false),
@@ -1249,7 +1249,7 @@
       status: findCsvColumn(headers, ["상태", "status"], false)
     };
     var compoundSchoolNumber = headers[columns.student_number] === "학번";
-    if (columns.class_number < 0 && !defaultClass && !compoundSchoolNumber) throw new Error("CSV에 반 열이 없습니다. 위에서 업로드할 반을 선택해 주세요.");
+    if (columns.class_number < 0 && !defaultClass && !compoundSchoolNumber) throw new Error(label + "에 반 열이 없습니다. 학급을 선택하거나 파일명을 `1반.xlsx`처럼 지정해 주세요.");
     var students = rows.slice(headerRow + 1).map(function (row) {
       var rawStudentNumber = String(row[columns.student_number] || "").trim();
       var classNumber = columns.class_number < 0 ? String(defaultClass || "") : csvInteger(row[columns.class_number], "class");
@@ -1277,8 +1277,40 @@
     return students;
   }
 
-  function readRosterFile(file) {
+  function parseRosterCsv(text, defaultClass, sourceLabel) {
+    return parseRosterRows(parseCsvRows(text), defaultClass, sourceLabel || "CSV");
+  }
+
+  function inferClassFromFilename(fileName) {
+    var match = String(fileName || "").match(/(?:^|\D)([1-9])\s*반/);
+    return match ? match[1] : "";
+  }
+
+  function readRosterWorkbook(buffer, file, defaultClass) {
+    if (!window.XLSX) throw new Error("엑셀 파일 처리 도구를 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
+    var workbook = window.XLSX.read(buffer, { type: "array", cellDates: false });
+    var lastError;
+    for (var index = 0; index < workbook.SheetNames.length; index += 1) {
+      var sheetName = workbook.SheetNames[index];
+      var rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+        header: 1,
+        defval: "",
+        raw: false,
+        blankrows: false
+      });
+      try {
+        return parseRosterRows(rows, defaultClass, file.name + "의 " + sheetName + " 시트");
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(file.name + "에서 학생 명단을 찾을 수 없습니다.");
+  }
+
+  function readRosterFile(file, defaultClass) {
     return file.arrayBuffer().then(function (buffer) {
+      var extension = String(file.name || "").split(".").pop().toLowerCase();
+      if (extension === "xlsx" || extension === "xls") return readRosterWorkbook(buffer, file, defaultClass);
       var bytes = new Uint8Array(buffer);
       var utf8;
       try {
@@ -1297,42 +1329,64 @@
       var lastError;
       for (var index = 0; index < candidates.length; index += 1) {
         try {
-          parseRosterCsv(candidates[index], document.getElementById("roster-default-class").value);
-          return candidates[index];
+          return parseRosterCsv(candidates[index], defaultClass, file.name);
         } catch (error) {
           lastError = error;
         }
       }
-      throw lastError || new Error("CSV 파일을 읽을 수 없습니다.");
+      throw lastError || new Error(file.name + " 파일을 읽을 수 없습니다.");
     });
   }
 
-  function prepareRosterFile() {
+  function mergeRosterStudents(groups) {
+    var byStudent = new Map();
+    groups.forEach(function (students) {
+      students.forEach(function (student) {
+        var key = student.class_number + ":" + student.student_number;
+        var previous = byStudent.get(key);
+        var normalizedName = String(student.student_name || "").replace(/\s+/g, "").toLowerCase();
+        var previousName = previous ? String(previous.student_name || "").replace(/\s+/g, "").toLowerCase() : "";
+        if (previous && previousName !== normalizedName) {
+          throw new Error(student.class_number + "반 " + student.student_number + "번 학생 정보가 파일 사이에서 서로 다릅니다.");
+        }
+        if (!previous) byStudent.set(key, student);
+      });
+    });
+    var students = Array.from(byStudent.values()).sort(function (a, b) {
+      return Number(a.class_number) - Number(b.class_number) || Number(a.student_number) - Number(b.student_number);
+    });
+    if (students.length > 500) throw new Error("한 번에 등록할 수 있는 학생은 최대 500명입니다.");
+    return students;
+  }
+
+  function prepareRosterFiles() {
     var fileInput = document.getElementById("roster-csv");
-    var file = fileInput.files && fileInput.files[0];
+    var files = Array.prototype.slice.call(fileInput.files || []);
     pendingRosterRows = [];
     document.getElementById("import-roster").disabled = true;
-    if (!file) return;
-    document.getElementById("roster-file-name").textContent = file.name + " 읽는 중…";
-    var readPromise = pendingRosterText ? Promise.resolve(pendingRosterText) : readRosterFile(file);
-    readPromise.then(function (text) {
-      pendingRosterText = text;
-      pendingRosterRows = parseRosterCsv(text, document.getElementById("roster-default-class").value);
+    if (!files.length) return;
+    document.getElementById("roster-file-name").textContent = files.length + "개 파일 읽는 중…";
+    var selectedDefaultClass = document.getElementById("roster-default-class").value;
+    Promise.all(files.map(function (file) {
+      var defaultClass = inferClassFromFilename(file.name) || (files.length === 1 ? selectedDefaultClass : "");
+      return readRosterFile(file, defaultClass);
+    })).then(function (groups) {
+      pendingRosterRows = mergeRosterStudents(groups);
       var unassigned = pendingRosterRows.filter(function (student) { return !student.group_number; }).length;
-      document.getElementById("roster-file-name").textContent = file.name + " · " + pendingRosterRows.length + "명 확인";
+      var classes = Array.from(new Set(pendingRosterRows.map(function (student) { return Number(student.class_number); }))).sort(function (a, b) { return a - b; });
+      document.getElementById("roster-file-name").textContent = files.length + "개 파일 · " + classes.map(function (item) { return item + "반"; }).join(", ") + " · " + pendingRosterRows.length + "명 확인";
       if (unassigned) document.getElementById("roster-file-name").textContent += " · 모둠 미배정 " + unassigned + "명";
       document.getElementById("import-roster").disabled = false;
     }).catch(function (error) {
-      document.getElementById("roster-file-name").textContent = "CSV 형식을 확인해 주세요.";
+      document.getElementById("roster-file-name").textContent = "엑셀 또는 CSV 형식을 확인해 주세요.";
       showToast(error.message);
     });
   }
 
   document.getElementById("roster-csv").addEventListener("change", function () {
-    pendingRosterText = "";
-    prepareRosterFile();
+    prepareRosterFiles();
   });
-  document.getElementById("roster-default-class").addEventListener("change", prepareRosterFile);
+  document.getElementById("roster-default-class").addEventListener("change", prepareRosterFiles);
 
   document.getElementById("import-roster").addEventListener("click", function () {
     if (!pendingRosterRows.length) return;
@@ -1347,9 +1401,8 @@
     }).then(function (result) {
       showToast(result.imported + "명을 등록했습니다. 이제 사전 명단 확인 로그인이 적용됩니다.");
       pendingRosterRows = [];
-      pendingRosterText = "";
       document.getElementById("roster-csv").value = "";
-      document.getElementById("roster-file-name").textContent = "반·번호·이름 열을 자동으로 찾습니다.";
+      document.getElementById("roster-file-name").textContent = "XLSX·XLS·CSV의 반·번호·이름 열을 자동으로 찾습니다.";
       if (importedClasses.length === 1) {
         document.getElementById("roster-class-filter").value = importedClasses[0];
         document.getElementById("team-class-select").value = importedClasses[0];

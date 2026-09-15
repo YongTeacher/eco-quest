@@ -431,7 +431,6 @@ async function importRoster(context, user) {
   const rosterByKey = new Map(currentRoster.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
   const studentByKey = new Map(currentStudents.results.map(function (row) { return [row.class_number + ":" + row.student_number, row]; }));
   const now = new Date().toISOString();
-  const statements = [];
   imported.forEach(function (row) {
     const key = row.class_number + ":" + row.student_number;
     const previousRoster = rosterByKey.get(key);
@@ -443,17 +442,22 @@ async function importRoster(context, user) {
     row.id = id;
     row.created_at = previousRoster ? previousRoster.created_at : previousStudent ? previousStudent.created_at : now;
     row.updated_at = now;
-    statements.push(env.ECO_DB.prepare(
-      "INSERT INTO student_roster (id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(class_number, student_number) DO UPDATE SET student_name = excluded.student_name, normalized_name = excluded.normalized_name, group_number = excluded.group_number, status = excluded.status, updated_at = excluded.updated_at"
-    ).bind(row.id, row.class_number, row.student_number, row.student_name, row.normalized_name, row.group_number, row.status, row.created_at, row.updated_at));
-    if (previousStudent) {
-      statements.push(row.group_number === null
-        ? env.ECO_DB.prepare("UPDATE students SET student_name = ?, status = ?, updated_at = ? WHERE id = ?")
-          .bind(row.student_name, row.status, now, previousStudent.id)
-        : env.ECO_DB.prepare("UPDATE students SET student_name = ?, group_number = ?, status = ?, updated_at = ? WHERE id = ?")
-          .bind(row.student_name, row.group_number, row.status, now, previousStudent.id));
-    }
   });
+
+  const statements = [];
+  for (let offset = 0; offset < imported.length; offset += 10) {
+    const chunk = imported.slice(offset, offset + 10);
+    const values = chunk.map(function () { return "(?, ?, ?, ?, ?, ?, ?, ?, ?)"; }).join(", ");
+    const bindings = chunk.flatMap(function (row) {
+      return [row.id, row.class_number, row.student_number, row.student_name, row.normalized_name, row.group_number, row.status, row.created_at, row.updated_at];
+    });
+    statements.push(env.ECO_DB.prepare(
+      "INSERT INTO student_roster (id, class_number, student_number, student_name, normalized_name, group_number, status, created_at, updated_at) VALUES " + values + " ON CONFLICT(class_number, student_number) DO UPDATE SET student_name = excluded.student_name, normalized_name = excluded.normalized_name, group_number = excluded.group_number, status = excluded.status, updated_at = excluded.updated_at"
+    ).bind(...bindings));
+  }
+  statements.push(env.ECO_DB.prepare(
+    "UPDATE students SET student_name = (SELECT r.student_name FROM student_roster r WHERE r.class_number = students.class_number AND r.student_number = students.student_number), group_number = COALESCE((SELECT r.group_number FROM student_roster r WHERE r.class_number = students.class_number AND r.student_number = students.student_number), group_number), status = (SELECT r.status FROM student_roster r WHERE r.class_number = students.class_number AND r.student_number = students.student_number), updated_at = ? WHERE EXISTS (SELECT 1 FROM student_roster r WHERE r.class_number = students.class_number AND r.student_number = students.student_number)"
+  ).bind(now));
   statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student'"));
   await env.ECO_DB.batch(statements);
 
