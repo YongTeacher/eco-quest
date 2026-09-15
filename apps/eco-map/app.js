@@ -35,10 +35,12 @@
   var qrPreviousFocus;
   var adminObservations = [];
   var adminGuides = [];
+  var adminReflections = [];
   var adminMap;
   var adminMapClusterer;
   var adminMapMarkers = [];
   var adminRecordPreviousFocus;
+  var currentReflection;
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -142,6 +144,7 @@
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (name === "map") window.setTimeout(ensureKakaoMap, 0);
+    if (name === "reflection") loadReflection();
   }
 
   function setTeacherView(name) {
@@ -150,6 +153,7 @@
       map: ["전체 생태지도", "학생들이 발견한 생물의 위치를 통합 또는 학급별로 확인합니다."],
       observations: ["모둠 관찰 기록", "학생들이 공동으로 등록한 발견 사진과 동정 기록을 확인합니다."],
       guides: ["개인 생물도감", "학생 개인별로 완성한 생물도감과 조사 내용을 확인합니다."],
+      reflections: ["학생 소감문", "개인별 탐사 성찰 내용과 최종 제출 상태를 확인합니다."],
       roster: ["학생·모둠 관리", "등록된 학생을 확인하고 모둠 번호를 직접 배정할 수 있습니다."],
       settings: ["수업 설정", "학급 CSV 명단을 등록하고 로그인 준비 상태를 확인합니다."]
     };
@@ -166,6 +170,7 @@
     if (selected === "map") loadAdminObservations(true);
     if (selected === "observations") loadAdminObservations(false);
     if (selected === "guides") loadAdminGuides();
+    if (selected === "reflections") loadAdminReflections();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -497,6 +502,80 @@
     grid.innerHTML = cards.join("");
     updateDexProgress();
   }
+
+  function reflectionValues() {
+    return {
+      memorable_species: document.getElementById("reflection-memorable").value.trim(),
+      contribution: document.getElementById("reflection-contribution").value.trim(),
+      problem_solving: document.getElementById("reflection-problem").value.trim(),
+      ecological_learning: document.getElementById("reflection-learning").value.trim(),
+      perspective_change: document.getElementById("reflection-change").value.trim(),
+      further_question: document.getElementById("reflection-question").value.trim(),
+      free_reflection: document.getElementById("reflection-free").value.trim()
+    };
+  }
+
+  function renderReflection(result) {
+    currentReflection = result.reflection || null;
+    var data = currentReflection || {};
+    document.getElementById("reflection-memorable").value = data.memorable_species || "";
+    document.getElementById("reflection-contribution").value = data.contribution || "";
+    document.getElementById("reflection-problem").value = data.problem_solving || "";
+    document.getElementById("reflection-learning").value = data.ecological_learning || "";
+    document.getElementById("reflection-change").value = data.perspective_change || "";
+    document.getElementById("reflection-question").value = data.further_question || "";
+    document.getElementById("reflection-free").value = data.free_reflection || "";
+    document.getElementById("reflection-guide-count").textContent = "완성 도감 " + Number(result.guide_count || 0) + "개";
+    var submitted = data.status === "submitted";
+    var locked = submitted && !result.allow_edits_after_submit;
+    var status = document.getElementById("reflection-status");
+    status.textContent = submitted ? "최종 제출 완료" : data.status === "draft" ? "임시 저장" : "미작성";
+    status.className = "reflection-status " + (submitted ? "submitted" : data.status === "draft" ? "draft" : "");
+    document.getElementById("reflection-edit-notice").textContent = submitted
+      ? locked ? "최종 제출이 완료되었습니다. 수정이 필요하면 담당 선생님께 요청하세요." : "선생님이 수정을 허용했습니다. 수정 후 다시 최종 제출하세요."
+      : "최종 제출 후에는 교사의 허용이 있어야 수정할 수 있습니다.";
+    document.querySelectorAll("#reflection-form textarea").forEach(function (field) { field.disabled = locked; });
+    document.getElementById("save-reflection-draft").disabled = locked;
+    document.getElementById("submit-reflection").disabled = locked;
+    document.getElementById("submit-reflection").textContent = locked ? "최종 제출 완료" : submitted ? "수정 내용 재제출" : "최종 제출";
+    document.getElementById("reflection-saved-at").textContent = data.updated_at ? "마지막 저장: " + formatDate(data.updated_at) : "아직 저장하지 않았습니다.";
+  }
+
+  function loadReflection() {
+    if (!currentUser || currentUser.role !== "student") return;
+    api("reflection").then(renderReflection).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function saveReflection(status) {
+    var draftButton = document.getElementById("save-reflection-draft");
+    var submitButton = document.getElementById("submit-reflection");
+    var button = status === "submitted" ? submitButton : draftButton;
+    var oldText = button.textContent;
+    button.disabled = true;
+    button.textContent = "저장 중…";
+    api("reflection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign(reflectionValues(), { status: status }))
+    }).then(function (result) {
+      renderReflection({ reflection: result.reflection, guide_count: result.reflection.guide_count, allow_edits_after_submit: result.allow_edits_after_submit });
+      showToast(status === "submitted" ? "소감문을 최종 제출했습니다." : "소감문을 임시 저장했습니다.");
+    }).catch(function (error) {
+      showToast(error.message);
+      button.disabled = false;
+      button.textContent = oldText;
+    });
+  }
+
+  document.getElementById("save-reflection-draft").addEventListener("click", function () { saveReflection("draft"); });
+  document.getElementById("reflection-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!window.confirm("소감문 내용을 확인했나요? 최종 제출 후에는 선생님이 허용해야 수정할 수 있습니다.")) return;
+    saveReflection("submitted");
+  });
 
   function showGuideMapError(message) {
     var loading = document.getElementById("guide-location-map-loading");
@@ -1743,16 +1822,80 @@
       '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + '</dd><dt>서식지</dt><dd>' + escapeHtml(item.habitat) + '</dd><dt>주요 특징</dt><dd>' + escapeHtml(item.key_features) + '</dd><dt>생태계 역할</dt><dd>' + escapeHtml(item.ecological_role) + '</dd><dt>조사 보고서</dt><dd>' + escapeHtml(item.report) + '</dd><dt>참고 자료</dt><dd>' + source + '</dd><dt>수정일</dt><dd>' + escapeHtml(formatDate(item.updated_at)) + '</dd></dl>');
   }
 
+  function reflectionStatusLabel(status) {
+    return status === "submitted" ? "최종 제출" : status === "draft" ? "임시 저장" : "미작성";
+  }
+
+  function reflectionSyncLabel(status) {
+    return status === "synced" ? "동기화 완료" : status === "pending" ? "전송 대기" : status === "failed" ? "동기화 실패" : "저장 전";
+  }
+
+  function loadAdminReflections() {
+    api("admin/reflections").then(function (result) {
+      adminReflections = result.reflections || [];
+      var toggle = document.getElementById("allow-reflection-edits");
+      toggle.checked = Boolean(result.allow_edits_after_submit);
+      document.getElementById("allow-reflection-label").textContent = toggle.checked ? "수정 허용 중" : "허용 안 함";
+      renderAdminReflections();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function renderAdminReflections() {
+    var classValue = document.getElementById("admin-reflection-class").value;
+    var statusValue = document.getElementById("admin-reflection-status").value;
+    var filtered = adminReflections.filter(function (item) {
+      return (classValue === "all" || Number(item.class_number) === Number(classValue)) &&
+        (statusValue === "all" || item.reflection_status === statusValue);
+    });
+    var submitted = adminReflections.filter(function (item) { return item.reflection_status === "submitted"; }).length;
+    var draft = adminReflections.filter(function (item) { return item.reflection_status === "draft"; }).length;
+    document.getElementById("admin-reflection-result").textContent = "총 " + filtered.length + "명";
+    document.getElementById("admin-reflection-summary").textContent = "최종 제출 " + submitted + "명 · 임시 저장 " + draft + "명 · 미작성 " + (adminReflections.length - submitted - draft) + "명";
+    document.getElementById("admin-reflection-list").innerHTML = filtered.length ? filtered.map(function (item) {
+      var index = adminReflections.indexOf(item);
+      var canOpen = item.reflection_status !== "not_started";
+      return '<tr><td>' + escapeHtml(item.class_number) + '</td><td>' + escapeHtml(item.student_number) + '</td><td><b>' + escapeHtml(item.student_name) + '</b></td><td>' + escapeHtml(item.group_number || "미배정") + '</td><td>' + escapeHtml(item.guide_count) + '개</td><td><span class="reflection-state ' + escapeHtml(item.reflection_status) + '">' + reflectionStatusLabel(item.reflection_status) + '</span></td><td>' + escapeHtml(item.submitted_at ? formatDate(item.submitted_at) : "-") + '</td><td><span class="sync-state ' + escapeHtml(item.sync_status) + '">' + reflectionSyncLabel(item.sync_status) + '</span></td><td>' + (canOpen ? '<button class="table-detail-button" type="button" data-admin-reflection="' + index + '">보기</button>' : '-') + '</td></tr>';
+    }).join("") : '<tr><td colspan="9" class="empty-message">조건에 맞는 학생이 없습니다.</td></tr>';
+  }
+
+  function openAdminReflection(item) {
+    openAdminRecord("탐사 소감문", item.class_number + "반 " + item.student_number + "번 " + item.student_name + " · " + reflectionStatusLabel(item.reflection_status),
+      '<div class="admin-detail-tags"><span>완성 도감 ' + escapeHtml(item.guide_count) + '개</span><span>' + reflectionStatusLabel(item.reflection_status) + '</span><span>' + reflectionSyncLabel(item.sync_status) + '</span></div>' +
+      '<dl><dt>1. 인상 깊었던 생물</dt><dd>' + escapeHtml(item.memorable_species || "미작성") + '</dd><dt>2. 역할과 기여</dt><dd>' + escapeHtml(item.contribution || "미작성") + '</dd><dt>3. 문제 해결</dt><dd>' + escapeHtml(item.problem_solving || "미작성") + '</dd><dt>4. 생태 지식</dt><dd>' + escapeHtml(item.ecological_learning || "미작성") + '</dd><dt>5. 생각의 변화</dt><dd>' + escapeHtml(item.perspective_change || "미작성") + '</dd><dt>6. 후속 탐구 질문</dt><dd>' + escapeHtml(item.further_question || "미작성") + '</dd><dt>7. 자유 소감</dt><dd>' + escapeHtml(item.free_reflection || "미작성") + '</dd><dt>최종 제출일</dt><dd>' + escapeHtml(item.submitted_at ? formatDate(item.submitted_at) : "미제출") + '</dd></dl>');
+  }
+
   document.getElementById("admin-observation-class").addEventListener("change", renderAdminObservationList);
   document.getElementById("admin-observation-category").addEventListener("change", renderAdminObservationList);
   document.getElementById("admin-map-class").addEventListener("change", renderAdminMap);
   document.getElementById("admin-map-category").addEventListener("change", renderAdminMap);
   document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
+  document.getElementById("admin-reflection-class").addEventListener("change", renderAdminReflections);
+  document.getElementById("admin-reflection-status").addEventListener("change", renderAdminReflections);
+  document.getElementById("allow-reflection-edits").addEventListener("change", function () {
+    var toggle = this;
+    toggle.disabled = true;
+    api("admin/reflections/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ allow_edits_after_submit: toggle.checked })
+    }).then(function (result) {
+      document.getElementById("allow-reflection-label").textContent = result.allow_edits_after_submit ? "수정 허용 중" : "허용 안 함";
+      showToast(result.allow_edits_after_submit ? "최종 제출 후 수정을 허용했습니다." : "최종 제출 후 수정을 잠갔습니다.");
+    }).catch(function (error) {
+      toggle.checked = !toggle.checked;
+      showToast(error.message);
+    }).finally(function () { toggle.disabled = false; });
+  });
   document.getElementById("teacher-app").addEventListener("click", function (event) {
     var observationCard = event.target.closest("[data-admin-observation]");
     var guideCard = event.target.closest("[data-admin-guide]");
+    var reflectionButton = event.target.closest("[data-admin-reflection]");
     if (observationCard && adminObservations[Number(observationCard.dataset.adminObservation)]) openAdminObservation(adminObservations[Number(observationCard.dataset.adminObservation)]);
     if (guideCard && adminGuides[Number(guideCard.dataset.adminGuide)]) openAdminGuide(adminGuides[Number(guideCard.dataset.adminGuide)]);
+    if (reflectionButton && adminReflections[Number(reflectionButton.dataset.adminReflection)]) openAdminReflection(adminReflections[Number(reflectionButton.dataset.adminReflection)]);
   });
   document.getElementById("close-admin-record").addEventListener("click", function () {
     document.getElementById("admin-record-modal").hidden = true;

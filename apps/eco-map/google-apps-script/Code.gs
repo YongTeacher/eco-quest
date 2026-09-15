@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.3.0";
+const ECO_QUEST_VERSION = "1.4.0";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -41,6 +41,15 @@ const ECO_SHEETS = Object.freeze({
     headers: [
       "student_id", "반", "번호", "이름", "기본 도감 수", "허용 도감 수", "완성 도감 수",
       "최근 제출", "제출 상태", "동기화 시각"
+    ]
+  },
+  REFLECTIONS: {
+    name: "소감문",
+    headers: [
+      "student_id", "반", "번호", "이름", "모둠", "완성 도감 수", "제출 상태",
+      "인상 깊었던 생물과 이유", "역할과 기여", "문제와 해결 방법", "새롭게 알게 된 생태 지식",
+      "활동 전후 생각의 변화", "더 탐구하고 싶은 질문", "자유 소감",
+      "최초 작성일", "최종 제출일", "수정일", "동기화 시각"
     ]
   },
   REVIEWS: {
@@ -92,6 +101,7 @@ function setupEcoQuest() {
 
   const audit = spreadsheet.getSheetByName(ECO_SHEETS.AUDIT.name);
   if (audit && !audit.isSheetHidden()) audit.hideSheet();
+  syncReflectionRosterFromStudentSheet_(spreadsheet, new Date());
   refreshDashboard_(spreadsheet);
   spreadsheet.setActiveSheet(spreadsheet.getSheetByName(ECO_SHEETS.DASHBOARD.name));
   SpreadsheetApp.flush();
@@ -159,6 +169,7 @@ function handleEvent_(body) {
     case "roster.replace":
       if (!Array.isArray(data.students) || data.students.length < 1) throw new Error("학생 명단이 비어 있습니다.");
       replaceStudentRoster_(data.students, now);
+      syncReflectionRoster_(data.students, now);
       return { id: "student-roster", sheet: ECO_SHEETS.STUDENTS.name, count: data.students.length };
 
     case "student.upsert":
@@ -195,6 +206,17 @@ function handleEvent_(body) {
       refreshSubmission_(data.student_id, now);
       return { id: data.guide_id, sheet: ECO_SHEETS.GUIDES.name };
 
+    case "reflection.upsert":
+      requireFields_(data, ["student_id", "class_number", "student_number", "student_name", "status"]);
+      upsertRow_(ECO_SHEETS.REFLECTIONS, data.student_id, [
+        data.student_id, data.class_number, data.student_number, safeCell_(data.student_name), data.group_number || "",
+        Number(data.guide_count || 0), data.status === "submitted" ? "최종 제출" : "임시 저장",
+        safeCell_(data.memorable_species || ""), safeCell_(data.contribution || ""), safeCell_(data.problem_solving || ""),
+        safeCell_(data.ecological_learning || ""), safeCell_(data.perspective_change || ""), safeCell_(data.further_question || ""),
+        safeCell_(data.free_reflection || ""), toDate_(data.created_at), toDate_(data.submitted_at), toDate_(data.updated_at), now
+      ]);
+      return { id: data.student_id, sheet: ECO_SHEETS.REFLECTIONS.name };
+
     case "test.cleanup":
       const studentIds = stringArray_(data.student_ids);
       const observationIds = stringArray_(data.observation_ids);
@@ -204,6 +226,7 @@ function handleEvent_(body) {
       deleteRowsByValues_(ECO_SHEETS.OBSERVATIONS, 1, observationIds);
       deleteRowsByValues_(ECO_SHEETS.REVIEWS, 4, studentIds.concat(observationIds, guideIds));
       deleteRowsByValues_(ECO_SHEETS.SUBMISSIONS, 1, studentIds);
+      deleteRowsByValues_(ECO_SHEETS.REFLECTIONS, 1, studentIds);
       deleteRowsByValues_(ECO_SHEETS.STUDENTS, 1, studentIds);
       affectedStudentIds.forEach(function (studentId) { refreshSubmission_(studentId, now); });
       return { id: "test-account-9-99", sheet: "전체", count: studentIds.length + observationIds.length + guideIds.length };
@@ -237,6 +260,43 @@ function replaceStudentRoster_(students, now) {
   if (oldRows) sheet.getRange(2, 1, oldRows, ECO_SHEETS.STUDENTS.headers.length).clearContent();
   sheet.getRange(2, 1, values.length, ECO_SHEETS.STUDENTS.headers.length).setValues(values);
   sheet.getRange(2, 2, values.length, 4).setHorizontalAlignment("center");
+}
+
+function syncReflectionRosterFromStudentSheet_(spreadsheet, now) {
+  const sheet = spreadsheet.getSheetByName(ECO_SHEETS.STUDENTS.name);
+  const students = rows_(sheet, ECO_SHEETS.STUDENTS.headers.length).map(function (row) {
+    return { student_id: row[0], class_number: row[1], student_number: row[2], student_name: row[3], group_number: row[4] };
+  }).filter(function (student) { return Boolean(student.student_id); });
+  if (students.length) syncReflectionRoster_(students, now);
+}
+
+function syncReflectionRoster_(students, now) {
+  const spreadsheet = getEcoSpreadsheet_();
+  const sheet = spreadsheet.getSheetByName(ECO_SHEETS.REFLECTIONS.name);
+  if (!sheet) throw new Error(ECO_SHEETS.REFLECTIONS.name + " 시트가 없습니다. 초기 설정을 다시 실행해 주세요.");
+  const existing = rows_(sheet, ECO_SHEETS.REFLECTIONS.headers.length);
+  const byId = new Map(existing.map(function (row) { return [String(row[0]), row]; }));
+  const submissions = rows_(spreadsheet.getSheetByName(ECO_SHEETS.SUBMISSIONS.name), ECO_SHEETS.SUBMISSIONS.headers.length);
+  const guideCounts = new Map(submissions.map(function (row) { return [String(row[0]), Number(row[6] || 0)]; }));
+  const values = students.map(function (student) {
+    const saved = byId.get(String(student.student_id));
+    if (saved) {
+      saved[1] = student.class_number;
+      saved[2] = student.student_number;
+      saved[3] = safeCell_(student.student_name);
+      saved[4] = student.group_number || "";
+      saved[5] = guideCounts.get(String(student.student_id)) || Number(saved[5] || 0);
+      saved[17] = now;
+      return saved;
+    }
+    return [
+      student.student_id, student.class_number, student.student_number, safeCell_(student.student_name), student.group_number || "",
+      guideCounts.get(String(student.student_id)) || 0, "미작성", "", "", "", "", "", "", "", "", "", "", now
+    ];
+  });
+  const oldRows = Math.max(0, sheet.getLastRow() - 1);
+  if (oldRows) sheet.getRange(2, 1, oldRows, ECO_SHEETS.REFLECTIONS.headers.length).clearContent();
+  if (values.length) sheet.getRange(2, 1, values.length, ECO_SHEETS.REFLECTIONS.headers.length).setValues(values);
 }
 
 function prepareDataSheet_(spreadsheet, definition) {

@@ -3,6 +3,7 @@ const SESSION_SECONDS = 60 * 60 * 10;
 const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
 let rosterSchemaPromise;
+let reflectionSchemaPromise;
 const PHOTO_TYPES = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -45,8 +46,12 @@ async function route(context) {
 
   if (method === "GET" && path === "guides") return listGuides(context, user);
   if (method === "POST" && path === "guides") return createGuide(context, user);
+  if (method === "GET" && path === "reflection") return getReflection(context, user);
+  if (method === "POST" && path === "reflection") return saveReflection(context, user);
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
   if (method === "GET" && path === "admin/guides") return listAdminGuides(context, user);
+  if (method === "GET" && path === "admin/reflections") return listAdminReflections(context, user);
+  if (method === "PATCH" && path === "admin/reflections/settings") return updateReflectionSettings(context, user);
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
@@ -373,6 +378,113 @@ async function ensureRosterSchema(env) {
   await rosterSchemaPromise;
 }
 
+async function ensureReflectionSchema(env) {
+  if (!reflectionSchemaPromise) {
+    reflectionSchemaPromise = env.ECO_DB.batch([
+      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS reflections (student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE, memorable_species TEXT NOT NULL DEFAULT '', contribution TEXT NOT NULL DEFAULT '', problem_solving TEXT NOT NULL DEFAULT '', ecological_learning TEXT NOT NULL DEFAULT '', perspective_change TEXT NOT NULL DEFAULT '', further_question TEXT NOT NULL DEFAULT '', free_reflection TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted')), created_at TEXT NOT NULL, submitted_at TEXT, updated_at TEXT NOT NULL)"),
+      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS eco_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+      env.ECO_DB.prepare("INSERT OR IGNORE INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('reflection_edit_after_submit', '0', ?)").bind(new Date().toISOString())
+    ]).catch(function (error) {
+      reflectionSchemaPromise = null;
+      throw error;
+    });
+  }
+  return reflectionSchemaPromise;
+}
+
+async function reflectionEditsAllowed(env) {
+  await ensureReflectionSchema(env);
+  const setting = await env.ECO_DB.prepare("SELECT setting_value FROM eco_settings WHERE setting_key = 'reflection_edit_after_submit'").first();
+  return Boolean(setting && String(setting.setting_value) === "1");
+}
+
+async function getReflection({ env }, user) {
+  if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await ensureReflectionSchema(env);
+  const [reflection, guideCount, allowEdits] = await Promise.all([
+    env.ECO_DB.prepare("SELECT * FROM reflections WHERE student_id = ?").bind(user.id).first(),
+    env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM field_guides WHERE student_id = ? AND status = '완료'").bind(user.id).first(),
+    reflectionEditsAllowed(env)
+  ]);
+  return json({ ok: true, reflection: reflection || null, guide_count: Number(guideCount.count || 0), allow_edits_after_submit: allowEdits });
+}
+
+async function saveReflection(context, user) {
+  const { request, env } = context;
+  if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await ensureReflectionSchema(env);
+  const body = await readJson(request);
+  const status = body.status === "submitted" ? "submitted" : body.status === "draft" ? "draft" : "";
+  if (!status) return json({ ok: false, error: "저장 상태가 올바르지 않습니다." }, 400);
+  const fields = {
+    memorable_species: optionalText(body.memorable_species, 2000, "인상 깊었던 생물과 이유"),
+    contribution: optionalText(body.contribution, 2000, "역할과 기여"),
+    problem_solving: optionalText(body.problem_solving, 2000, "문제와 해결 방법"),
+    ecological_learning: optionalText(body.ecological_learning, 2000, "새롭게 알게 된 생태 지식"),
+    perspective_change: optionalText(body.perspective_change, 2000, "생각의 변화"),
+    further_question: optionalText(body.further_question, 2000, "더 탐구하고 싶은 질문"),
+    free_reflection: optionalText(body.free_reflection, 3000, "자유 소감")
+  };
+  const existing = await env.ECO_DB.prepare("SELECT * FROM reflections WHERE student_id = ?").bind(user.id).first();
+  if (existing && existing.status === "submitted" && !(await reflectionEditsAllowed(env))) {
+    return json({ ok: false, error: "최종 제출이 완료되어 수정할 수 없습니다. 담당 선생님께 수정 허용을 요청해 주세요." }, 409);
+  }
+  const guideCount = await env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM field_guides WHERE student_id = ? AND status = '완료'").bind(user.id).first();
+  if (status === "submitted") {
+    if (Number(guideCount.count || 0) < 1) return json({ ok: false, error: "개인 생물도감을 최소 1개 완성한 뒤 제출할 수 있습니다." }, 409);
+    const labels = {
+      memorable_species: "인상 깊었던 생물과 이유", contribution: "역할과 기여", problem_solving: "문제와 해결 방법",
+      ecological_learning: "새롭게 알게 된 생태 지식", perspective_change: "생각의 변화", further_question: "더 탐구하고 싶은 질문", free_reflection: "자유 소감"
+    };
+    for (const key of Object.keys(fields)) {
+      if (fields[key].length < (key === "free_reflection" ? 5 : 10)) return json({ ok: false, error: labels[key] + "을(를) 조금 더 구체적으로 작성해 주세요." }, 400);
+    }
+  }
+  const now = new Date().toISOString();
+  const createdAt = existing ? existing.created_at : now;
+  const submittedAt = status === "submitted" ? now : existing && existing.submitted_at || null;
+  const data = {
+    student_id: user.id, class_number: user.class_number, student_number: user.student_number,
+    student_name: user.student_name, group_number: user.group_number, guide_count: Number(guideCount.count || 0),
+    ...fields, status, created_at: createdAt, submitted_at: submittedAt, updated_at: now
+  };
+  const sync = makeSyncEvent("reflection.upsert", user.id, data);
+  await env.ECO_DB.batch([
+    env.ECO_DB.prepare("INSERT INTO reflections (student_id, memorable_species, contribution, problem_solving, ecological_learning, perspective_change, further_question, free_reflection, status, created_at, submitted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(student_id) DO UPDATE SET memorable_species = excluded.memorable_species, contribution = excluded.contribution, problem_solving = excluded.problem_solving, ecological_learning = excluded.ecological_learning, perspective_change = excluded.perspective_change, further_question = excluded.further_question, free_reflection = excluded.free_reflection, status = excluded.status, submitted_at = excluded.submitted_at, updated_at = excluded.updated_at")
+      .bind(user.id, fields.memorable_species, fields.contribution, fields.problem_solving, fields.ecological_learning, fields.perspective_change, fields.further_question, fields.free_reflection, status, createdAt, submittedAt, now),
+    syncStatement(env.ECO_DB, sync)
+  ]);
+  context.waitUntil(syncSheetEvent(env, sync));
+  return json({ ok: true, reflection: data, allow_edits_after_submit: await reflectionEditsAllowed(env) });
+}
+
+async function listAdminReflections({ request, env }, user) {
+  requireTeacher(user);
+  await ensureRosterSchema(env);
+  await ensureReflectionSchema(env);
+  const url = new URL(request.url);
+  const classValue = url.searchParams.get("class");
+  const classNumber = classValue && classValue !== "all" ? integer(classValue, 1, 9, "반") : null;
+  const where = classNumber ? " WHERE r.class_number = ?" : "";
+  const statement = env.ECO_DB.prepare(
+    "SELECT r.id AS student_id, r.class_number, r.student_number, r.student_name, r.group_number, COALESCE((SELECT COUNT(*) FROM field_guides g WHERE g.student_id = s.id AND g.status = '완료'), 0) AS guide_count, f.memorable_species, f.contribution, f.problem_solving, f.ecological_learning, f.perspective_change, f.further_question, f.free_reflection, COALESCE(f.status, 'not_started') AS reflection_status, f.created_at, f.submitted_at, f.updated_at, COALESCE((SELECT q.status FROM sheet_sync_queue q WHERE q.event_type = 'reflection.upsert' AND q.target_id = r.id ORDER BY q.updated_at DESC LIMIT 1), 'not_queued') AS sync_status FROM student_roster r LEFT JOIN students s ON s.class_number = r.class_number AND s.student_number = r.student_number LEFT JOIN reflections f ON f.student_id = s.id" + where + " ORDER BY r.class_number, r.student_number LIMIT 500"
+  );
+  const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
+  return json({ ok: true, reflections: result.results, allow_edits_after_submit: await reflectionEditsAllowed(env) });
+}
+
+async function updateReflectionSettings(context, user) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureReflectionSchema(env);
+  const body = await readJson(request);
+  if (typeof body.allow_edits_after_submit !== "boolean") return json({ ok: false, error: "수정 허용 설정이 올바르지 않습니다." }, 400);
+  const value = body.allow_edits_after_submit ? "1" : "0";
+  await env.ECO_DB.prepare("INSERT INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('reflection_edit_after_submit', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at")
+    .bind(value, new Date().toISOString()).run();
+  return json({ ok: true, allow_edits_after_submit: body.allow_edits_after_submit });
+}
+
 async function listAdminGuides({ request, env }, user) {
   requireTeacher(user);
   const url = new URL(request.url);
@@ -572,6 +684,8 @@ async function deleteTestAccount(context, user) {
     statements.push(env.ECO_DB.prepare("DELETE FROM sheet_sync_queue WHERE target_id IN (" + placeholders + ")").bind(...targetIds));
   }
   if (student) {
+    await ensureReflectionSchema(env);
+    statements.push(env.ECO_DB.prepare("DELETE FROM reflections WHERE student_id = ?").bind(studentId));
     statements.push(env.ECO_DB.prepare("DELETE FROM field_guides WHERE student_id = ? OR observation_id IN (SELECT id FROM observations WHERE student_id = ?)").bind(studentId, studentId));
     statements.push(env.ECO_DB.prepare("DELETE FROM observations WHERE student_id = ?").bind(studentId));
     statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE student_id = ?").bind(studentId));
