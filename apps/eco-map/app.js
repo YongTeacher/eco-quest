@@ -33,6 +33,12 @@
   var pendingRosterRows = [];
   var rosterStudents = [];
   var qrPreviousFocus;
+  var adminObservations = [];
+  var adminGuides = [];
+  var adminMap;
+  var adminMapClusterer;
+  var adminMapMarkers = [];
+  var adminRecordPreviousFocus;
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -141,6 +147,9 @@
   function setTeacherView(name) {
     var labels = {
       dashboard: ["전체 수업 현황", "1반부터 9반까지의 생태 탐사 진행 상황입니다."],
+      map: ["전체 생태지도", "학생들이 발견한 생물의 위치를 통합 또는 학급별로 확인합니다."],
+      observations: ["모둠 관찰 기록", "학생들이 공동으로 등록한 발견 사진과 동정 기록을 확인합니다."],
+      guides: ["개인 생물도감", "학생 개인별로 완성한 생물도감과 조사 내용을 확인합니다."],
       roster: ["학생·모둠 관리", "등록된 학생을 확인하고 모둠 번호를 직접 배정할 수 있습니다."],
       settings: ["수업 설정", "학급 CSV 명단을 등록하고 로그인 준비 상태를 확인합니다."]
     };
@@ -154,6 +163,9 @@
     document.getElementById("teacher-page-title").textContent = labels[selected][0];
     document.getElementById("teacher-page-subtitle").textContent = labels[selected][1];
     if (selected === "roster") loadRoster();
+    if (selected === "map") loadAdminObservations(true);
+    if (selected === "observations") loadAdminObservations(false);
+    if (selected === "guides") loadAdminGuides();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1592,6 +1604,165 @@
     });
   });
 
+  function adminObservationFilters(prefix) {
+    var classSelect = document.getElementById(prefix + "-class");
+    var categorySelect = document.getElementById(prefix + "-category");
+    var classValue = classSelect ? classSelect.value : "all";
+    var categoryValue = categorySelect ? categorySelect.value : "all";
+    return adminObservations.filter(function (item) {
+      return (classValue === "all" || Number(item.class_number) === Number(classValue)) &&
+        (categoryValue === "all" || item.category === categoryValue);
+    });
+  }
+
+  function loadAdminObservations(showMap) {
+    api("observations").then(function (result) {
+      adminObservations = result.observations || [];
+      renderAdminObservationList();
+      renderAdminMap();
+      if (showMap) window.setTimeout(ensureAdminMap, 0);
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function adminObservationCard(item, index, compact) {
+    return '<button class="admin-record-card' + (compact ? ' compact' : '') + '" type="button" data-admin-observation="' + index + '">' +
+      '<img src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" loading="lazy" />' +
+      '<span class="admin-record-body"><span class="type-chip">' + escapeHtml(categoryLabel(item.category)) + '</span><b>' + escapeHtml(item.species_name) + '</b>' +
+      '<small>' + escapeHtml(item.class_number + '반 ' + item.group_number + '모둠 · ' + item.student_name) + '</small>' +
+      '<small>⌖ ' + escapeHtml(item.place_name) + ' · ' + escapeHtml(formatDate(item.created_at)) + '</small></span></button>';
+  }
+
+  function renderAdminObservationList() {
+    var list = document.getElementById("admin-observation-list");
+    if (!list) return;
+    var filtered = adminObservationFilters("admin-observation");
+    document.getElementById("admin-observation-result").textContent = "총 " + filtered.length + "건";
+    list.innerHTML = filtered.length ? filtered.map(function (item) {
+      return adminObservationCard(item, adminObservations.indexOf(item), false);
+    }).join("") : '<p class="empty-message">조건에 맞는 관찰 기록이 없습니다.</p>';
+  }
+
+  function ensureAdminMap() {
+    if (!window.kakao || !window.kakao.maps || typeof window.kakao.maps.load !== "function") {
+      document.getElementById("admin-kakao-map").innerHTML = '<p class="empty-message">카카오맵을 불러오지 못했습니다. 카카오 개발자 도메인 설정을 확인해 주세요.</p>';
+      return;
+    }
+    window.kakao.maps.load(function () {
+      var container = document.getElementById("admin-kakao-map");
+      if (!container || document.getElementById("teacher-view-map").hidden) return;
+      if (!adminMap) {
+        adminMap = new window.kakao.maps.Map(container, {
+          center: new window.kakao.maps.LatLng(schoolPosition.lat, schoolPosition.lng),
+          level: 4
+        });
+        adminMap.addControl(new window.kakao.maps.MapTypeControl(), window.kakao.maps.ControlPosition.TOPRIGHT);
+        adminMap.addControl(new window.kakao.maps.ZoomControl(), window.kakao.maps.ControlPosition.RIGHT);
+        adminMapClusterer = new window.kakao.maps.MarkerClusterer({ map: adminMap, averageCenter: true, minLevel: 5 });
+      }
+      adminMap.relayout();
+      renderAdminMap();
+    });
+  }
+
+  function renderAdminMap() {
+    var filtered = adminObservationFilters("admin-map");
+    var mapList = document.getElementById("admin-map-list");
+    if (!mapList) return;
+    document.getElementById("admin-map-count").textContent = filtered.length + "건";
+    mapList.innerHTML = filtered.length ? filtered.map(function (item) {
+      return adminObservationCard(item, adminObservations.indexOf(item), true);
+    }).join("") : '<p class="empty-message">조건에 맞는 관찰이 없습니다.</p>';
+    if (!adminMap) return;
+    if (adminMapClusterer) adminMapClusterer.clear();
+    adminMapMarkers.forEach(function (marker) { marker.setMap(null); });
+    adminMapMarkers = filtered.map(function (item) {
+      var marker = new window.kakao.maps.Marker({
+        position: new window.kakao.maps.LatLng(Number(item.latitude), Number(item.longitude)),
+        title: item.species_name
+      });
+      window.kakao.maps.event.addListener(marker, "click", function () { openAdminObservation(item); });
+      return marker;
+    });
+    if (adminMapClusterer) adminMapClusterer.addMarkers(adminMapMarkers);
+    if (filtered.length === 1) {
+      adminMap.setCenter(new window.kakao.maps.LatLng(Number(filtered[0].latitude), Number(filtered[0].longitude)));
+      adminMap.setLevel(3);
+    } else {
+      adminMap.setCenter(new window.kakao.maps.LatLng(schoolPosition.lat, schoolPosition.lng));
+      adminMap.setLevel(4);
+    }
+  }
+
+  function openAdminRecord(title, subtitle, html) {
+    adminRecordPreviousFocus = document.activeElement;
+    document.getElementById("admin-record-title").textContent = title;
+    document.getElementById("admin-record-subtitle").textContent = subtitle;
+    document.getElementById("admin-record-detail").innerHTML = html;
+    document.getElementById("admin-record-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("close-admin-record").focus();
+  }
+
+  function openAdminObservation(item) {
+    var mapUrl = "https://map.kakao.com/link/map/" + encodeURIComponent(item.place_name) + "," + item.latitude + "," + item.longitude;
+    openAdminRecord(item.species_name, item.class_number + "반 " + item.group_number + "모둠 · " + item.student_name,
+      '<img class="admin-detail-photo" src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" />' +
+      '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.identification_status || "학생 동정") + '</span><span>' + escapeHtml(item.review_status || "정상") + '</span></div>' +
+      '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + ' <a href="' + escapeHtml(mapUrl) + '" target="_blank" rel="noopener noreferrer">지도에서 보기 ↗</a></dd><dt>관찰 특징</dt><dd>' + escapeHtml(item.features || "미기록") + '</dd><dt>동정 근거</dt><dd>' + escapeHtml(item.identification_reason || "미기록") + '</dd><dt>참고 자료</dt><dd>' + escapeHtml(item.source || "미기록") + '</dd><dt>등록일</dt><dd>' + escapeHtml(formatDate(item.created_at)) + '</dd></dl>');
+  }
+
+  function loadAdminGuides() {
+    api("admin/guides").then(function (result) {
+      adminGuides = result.guides || [];
+      renderAdminGuides();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function renderAdminGuides() {
+    var classValue = document.getElementById("admin-guide-class").value;
+    var filtered = adminGuides.filter(function (item) { return classValue === "all" || Number(item.class_number) === Number(classValue); });
+    document.getElementById("admin-guide-result").textContent = "총 " + filtered.length + "개";
+    document.getElementById("admin-guide-list").innerHTML = filtered.length ? filtered.map(function (item) {
+      var index = adminGuides.indexOf(item);
+      return '<button class="admin-record-card guide" type="button" data-admin-guide="' + index + '"><img src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" loading="lazy" /><span class="admin-record-body"><span class="type-chip">' + escapeHtml(categoryLabel(item.category)) + '</span><b>' + escapeHtml(item.species_name) + '</b><small>' + escapeHtml(item.class_number + '반 ' + item.student_number + '번 ' + item.student_name) + '</small><small>' + escapeHtml(item.status + ' · ' + formatDate(item.updated_at)) + '</small></span></button>';
+    }).join("") : '<p class="empty-message">조건에 맞는 개인 도감이 없습니다.</p>';
+  }
+
+  function openAdminGuide(item) {
+    var sourceUrl = safeExternalUrl(item.source);
+    var source = sourceUrl ? '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(item.source) + '</a>' : escapeHtml(item.source || "미기록");
+    openAdminRecord(item.species_name, item.class_number + "반 " + item.student_number + "번 " + item.student_name,
+      '<img class="admin-detail-photo" src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" />' +
+      '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.status) + '</span></div>' +
+      '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + '</dd><dt>서식지</dt><dd>' + escapeHtml(item.habitat) + '</dd><dt>주요 특징</dt><dd>' + escapeHtml(item.key_features) + '</dd><dt>생태계 역할</dt><dd>' + escapeHtml(item.ecological_role) + '</dd><dt>조사 보고서</dt><dd>' + escapeHtml(item.report) + '</dd><dt>참고 자료</dt><dd>' + source + '</dd><dt>수정일</dt><dd>' + escapeHtml(formatDate(item.updated_at)) + '</dd></dl>');
+  }
+
+  document.getElementById("admin-observation-class").addEventListener("change", renderAdminObservationList);
+  document.getElementById("admin-observation-category").addEventListener("change", renderAdminObservationList);
+  document.getElementById("admin-map-class").addEventListener("change", renderAdminMap);
+  document.getElementById("admin-map-category").addEventListener("change", renderAdminMap);
+  document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
+  document.getElementById("teacher-app").addEventListener("click", function (event) {
+    var observationCard = event.target.closest("[data-admin-observation]");
+    var guideCard = event.target.closest("[data-admin-guide]");
+    if (observationCard && adminObservations[Number(observationCard.dataset.adminObservation)]) openAdminObservation(adminObservations[Number(observationCard.dataset.adminObservation)]);
+    if (guideCard && adminGuides[Number(guideCard.dataset.adminGuide)]) openAdminGuide(adminGuides[Number(guideCard.dataset.adminGuide)]);
+  });
+  document.getElementById("close-admin-record").addEventListener("click", function () {
+    document.getElementById("admin-record-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+    if (adminRecordPreviousFocus) adminRecordPreviousFocus.focus();
+  });
+  document.getElementById("admin-record-modal").addEventListener("click", function (event) {
+    if (event.target === this) document.getElementById("close-admin-record").click();
+  });
+
   function loadAdminOverview() {
     api("admin/overview").then(function (result) {
       var classes = result.classes || [];
@@ -1636,9 +1807,5 @@
       if (!teacherApp.hidden) setTeacherView(button.dataset.teacherView);
     });
   });
-  document.querySelectorAll("[data-teacher-unavailable]").forEach(function (button) {
-    button.addEventListener("click", function () { showToast("이 관리 화면은 다음 단계에서 연결됩니다."); });
-  });
-
   restoreSession();
 }());

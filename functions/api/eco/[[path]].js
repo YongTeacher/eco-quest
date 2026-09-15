@@ -46,6 +46,7 @@ async function route(context) {
   if (method === "GET" && path === "guides") return listGuides(context, user);
   if (method === "POST" && path === "guides") return createGuide(context, user);
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
+  if (method === "GET" && path === "admin/guides") return listAdminGuides(context, user);
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
@@ -195,7 +196,7 @@ async function listObservations({ request, env }, user) {
   }
   const where = clauses.length ? " WHERE " + clauses.join(" AND ") : "";
   const result = await env.ECO_DB.prepare(
-    "SELECT id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_status, review_status, created_at, updated_at FROM observations" + where + " ORDER BY created_at DESC LIMIT 1000"
+    "SELECT id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_reason, source, identification_status, review_status, created_at, updated_at FROM observations" + where + " ORDER BY created_at DESC LIMIT 1000"
   ).bind(...values).all();
   const origin = new URL(request.url).origin;
   return json({ ok: true, observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id }; }), viewer: user.role });
@@ -370,6 +371,25 @@ async function ensureRosterSchema(env) {
     });
   }
   await rosterSchemaPromise;
+}
+
+async function listAdminGuides({ request, env }, user) {
+  requireTeacher(user);
+  const url = new URL(request.url);
+  const classValue = url.searchParams.get("class");
+  const classNumber = classValue && classValue !== "all" ? integer(classValue, 1, 9, "반") : null;
+  const where = classNumber ? " WHERE st.class_number = ?" : "";
+  const statement = env.ECO_DB.prepare(
+    "SELECT g.*, st.class_number, st.student_number, st.student_name, st.group_number, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at FROM field_guides g JOIN students st ON st.id = g.student_id JOIN observations o ON o.id = g.observation_id" + where + " ORDER BY st.class_number, st.student_number, g.updated_at DESC LIMIT 1000"
+  );
+  const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
+  const origin = new URL(request.url).origin;
+  return json({
+    ok: true,
+    guides: result.results.map(function (row) {
+      return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id };
+    })
+  });
 }
 
 function normalizeStudentName(value) {
