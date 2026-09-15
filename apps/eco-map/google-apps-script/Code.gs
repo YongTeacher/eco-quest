@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.4.0";
+const ECO_QUEST_VERSION = "1.4.1";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -49,7 +49,7 @@ const ECO_SHEETS = Object.freeze({
       "student_id", "반", "번호", "이름", "모둠", "완성 도감 수", "제출 상태",
       "인상 깊었던 생물과 이유", "역할과 기여", "문제와 해결 방법", "새롭게 알게 된 생태 지식",
       "활동 전후 생각의 변화", "더 탐구하고 싶은 질문", "자유 소감",
-      "최초 작성일", "최종 제출일", "수정일", "동기화 시각"
+      "최초 작성일", "최종 제출일", "수정일", "동기화 시각", "GPT 복사용 통합본"
     ]
   },
   REVIEWS: {
@@ -102,6 +102,9 @@ function setupEcoQuest() {
   const audit = spreadsheet.getSheetByName(ECO_SHEETS.AUDIT.name);
   if (audit && !audit.isSheetHidden()) audit.hideSheet();
   syncReflectionRosterFromStudentSheet_(spreadsheet, new Date());
+  const reflectionSheet = spreadsheet.getSheetByName(ECO_SHEETS.REFLECTIONS.name);
+  reflectionSheet.setColumnWidth(ECO_SHEETS.REFLECTIONS.headers.length, 600);
+  reflectionSheet.getRange(2, ECO_SHEETS.REFLECTIONS.headers.length, Math.max(1, reflectionSheet.getMaxRows() - 1), 1).setWrap(true);
   refreshDashboard_(spreadsheet);
   spreadsheet.setActiveSheet(spreadsheet.getSheetByName(ECO_SHEETS.DASHBOARD.name));
   SpreadsheetApp.flush();
@@ -213,7 +216,8 @@ function handleEvent_(body) {
         Number(data.guide_count || 0), data.status === "submitted" ? "최종 제출" : "임시 저장",
         safeCell_(data.memorable_species || ""), safeCell_(data.contribution || ""), safeCell_(data.problem_solving || ""),
         safeCell_(data.ecological_learning || ""), safeCell_(data.perspective_change || ""), safeCell_(data.further_question || ""),
-        safeCell_(data.free_reflection || ""), toDate_(data.created_at), toDate_(data.submitted_at), toDate_(data.updated_at), now
+        safeCell_(data.free_reflection || ""), toDate_(data.created_at), toDate_(data.submitted_at), toDate_(data.updated_at), now,
+        safeCell_(reflectionCopyText_(data))
       ]);
       return { id: data.student_id, sheet: ECO_SHEETS.REFLECTIONS.name };
 
@@ -287,16 +291,48 @@ function syncReflectionRoster_(students, now) {
       saved[4] = student.group_number || "";
       saved[5] = guideCounts.get(String(student.student_id)) || Number(saved[5] || 0);
       saved[17] = now;
+      saved[18] = reflectionCopyText_({
+        class_number: saved[1], student_number: saved[2], student_name: saved[3], group_number: saved[4],
+        guide_count: saved[5], status: saved[6], memorable_species: saved[7], contribution: saved[8],
+        problem_solving: saved[9], ecological_learning: saved[10], perspective_change: saved[11],
+        further_question: saved[12], free_reflection: saved[13]
+      });
       return saved;
     }
     return [
       student.student_id, student.class_number, student.student_number, safeCell_(student.student_name), student.group_number || "",
-      guideCounts.get(String(student.student_id)) || 0, "미작성", "", "", "", "", "", "", "", "", "", "", now
+      guideCounts.get(String(student.student_id)) || 0, "미작성",
+      "", "", "", "", "", "", "",
+      "", "", "", now, ""
     ];
   });
   const oldRows = Math.max(0, sheet.getLastRow() - 1);
   if (oldRows) sheet.getRange(2, 1, oldRows, ECO_SHEETS.REFLECTIONS.headers.length).clearContent();
   if (values.length) sheet.getRange(2, 1, values.length, ECO_SHEETS.REFLECTIONS.headers.length).setValues(values);
+}
+
+function reflectionCopyText_(data) {
+  const answers = [
+    ["1. 탐사 중 가장 인상 깊었던 생물과 그 이유", data.memorable_species],
+    ["2. 내가 맡은 역할과 실제로 기여한 점", data.contribution],
+    ["3. 조사 과정에서 생긴 문제와 해결 방법", data.problem_solving],
+    ["4. 새롭게 알게 된 생태 지식", data.ecological_learning],
+    ["5. 활동 전후 생각이 달라진 점", data.perspective_change],
+    ["6. 더 탐구하고 싶은 질문", data.further_question],
+    ["7. 자유 소감", data.free_reflection]
+  ];
+  const hasAnswer = answers.some(function (item) { return String(item[1] || "").trim(); });
+  if (!hasAnswer) return "";
+  const status = data.status === "submitted" || data.status === "최종 제출" ? "최종 제출" : "임시 저장";
+  const header = [
+    "[생태월드 생태 탐사 소감문]",
+    "학생: " + (data.class_number || "-") + "반 " + (data.student_number || "-") + "번 " + (data.student_name || "-") + " (" + (data.group_number || "-") + "모둠)",
+    "완성한 개인 도감: " + Number(data.guide_count || 0) + "개",
+    "제출 상태: " + status
+  ];
+  return header.concat(answers.map(function (item) {
+    return item[0] + "\n답변: " + (String(item[1] || "").trim() || "미작성");
+  })).join("\n\n");
 }
 
 function prepareDataSheet_(spreadsheet, definition) {
