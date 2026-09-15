@@ -1371,6 +1371,15 @@
       var defaultClass = inferClassFromFilename(file.name) || (files.length === 1 ? selectedDefaultClass : "");
       return readRosterFile(file, defaultClass);
     })).then(function (groups) {
+      if (document.getElementById("keep-test-account").checked) {
+        groups.push([{
+          class_number: "9",
+          student_number: "99",
+          student_name: "테스트학생",
+          group_number: "1",
+          status: "활동"
+        }]);
+      }
       pendingRosterRows = mergeRosterStudents(groups);
       var unassigned = pendingRosterRows.filter(function (student) { return !student.group_number; }).length;
       var classes = Array.from(new Set(pendingRosterRows.map(function (student) { return Number(student.class_number); }))).sort(function (a, b) { return a - b; });
@@ -1387,6 +1396,7 @@
     prepareRosterFiles();
   });
   document.getElementById("roster-default-class").addEventListener("change", prepareRosterFiles);
+  document.getElementById("keep-test-account").addEventListener("change", prepareRosterFiles);
 
   document.getElementById("import-roster").addEventListener("click", function () {
     if (!pendingRosterRows.length) return;
@@ -1414,6 +1424,26 @@
       button.disabled = false;
     }).finally(function () {
       button.textContent = "명단 등록·갱신";
+    });
+  });
+
+  document.getElementById("delete-test-account").addEventListener("click", function () {
+    if (!window.confirm("9반 99번 테스트학생과 연결된 관찰·도감·사진을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
+    var button = this;
+    button.disabled = true;
+    button.textContent = "테스트 자료 삭제 중…";
+    api("admin/test-account", { method: "DELETE" }).then(function (result) {
+      document.getElementById("keep-test-account").checked = false;
+      showToast("테스트 계정과 관찰 " + result.deleted.observations + "건, 도감 " + result.deleted.guides + "개를 삭제했습니다.");
+      document.getElementById("roster-csv").value = "";
+      pendingRosterRows = [];
+      document.getElementById("roster-file-name").textContent = "XLSX·XLS·CSV의 반·번호·이름 열을 자동으로 찾습니다.";
+      return Promise.all([loadAdminOverview(), loadRoster()]);
+    }).catch(function (error) {
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "테스트 계정·자료 삭제";
     });
   });
 

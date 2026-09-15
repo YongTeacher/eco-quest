@@ -49,6 +49,7 @@ async function route(context) {
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
+  if (method === "DELETE" && path === "admin/test-account") return deleteTestAccount(context, user);
   const rosterGroupMatch = path.match(/^admin\/roster\/([0-9a-f-]{36})\/group$/i);
   if (method === "PATCH" && rosterGroupMatch) return updateRosterGroup(context, user, rosterGroupMatch[1]);
   if (method === "POST" && path === "admin/sync") return retrySheetSync(context, user);
@@ -508,6 +509,69 @@ async function listRoster({ request, env }, user) {
         guide_limit: Number(row.guide_limit || 3)
       };
     })
+  });
+}
+
+async function deleteTestAccount(context, user) {
+  const { env } = context;
+  requireTeacher(user);
+  requireBindings(env, ["ECO_DB", "ECO_PHOTOS"]);
+  await ensureRosterSchema(env);
+
+  const [student, roster] = await Promise.all([
+    env.ECO_DB.prepare("SELECT * FROM students WHERE class_number = 9 AND student_number = 99").first(),
+    env.ECO_DB.prepare("SELECT * FROM student_roster WHERE class_number = 9 AND student_number = 99").first()
+  ]);
+  const record = student || roster;
+  if (!record) return json({ ok: false, error: "9반 99번 테스트 계정을 찾을 수 없습니다." }, 404);
+  if (normalizeStudentName(record.student_name) !== normalizeStudentName("테스트학생")) {
+    return json({ ok: false, error: "9반 99번의 이름이 테스트학생과 달라 삭제하지 않았습니다." }, 409);
+  }
+
+  const studentId = student ? student.id : roster.id;
+  const observationResult = student
+    ? await env.ECO_DB.prepare("SELECT id, photo_key FROM observations WHERE student_id = ?").bind(studentId).all()
+    : { results: [] };
+  const guideResult = student
+    ? await env.ECO_DB.prepare("SELECT id, student_id FROM field_guides WHERE student_id = ? OR observation_id IN (SELECT id FROM observations WHERE student_id = ?)").bind(studentId, studentId).all()
+    : { results: [] };
+  const observationIds = observationResult.results.map(function (item) { return item.id; });
+  const guideIds = guideResult.results.map(function (item) { return item.id; });
+  const affectedStudentIds = Array.from(new Set(guideResult.results.map(function (item) { return item.student_id; }).filter(function (id) { return id && id !== studentId; })));
+  const targetIds = Array.from(new Set([studentId].concat(observationIds, guideIds)));
+  const placeholders = targetIds.map(function () { return "?"; }).join(", ");
+  const cleanup = makeSyncEvent("test.cleanup", "test-account-9-99", {
+    student_ids: [studentId],
+    observation_ids: observationIds,
+    guide_ids: guideIds,
+    affected_student_ids: affectedStudentIds
+  });
+  const statements = [];
+  if (targetIds.length) {
+    statements.push(env.ECO_DB.prepare("DELETE FROM reviews WHERE target_id IN (" + placeholders + ")").bind(...targetIds));
+    statements.push(env.ECO_DB.prepare("DELETE FROM sheet_sync_queue WHERE target_id IN (" + placeholders + ")").bind(...targetIds));
+  }
+  if (student) {
+    statements.push(env.ECO_DB.prepare("DELETE FROM field_guides WHERE student_id = ? OR observation_id IN (SELECT id FROM observations WHERE student_id = ?)").bind(studentId, studentId));
+    statements.push(env.ECO_DB.prepare("DELETE FROM observations WHERE student_id = ?").bind(studentId));
+    statements.push(env.ECO_DB.prepare("DELETE FROM sessions WHERE student_id = ?").bind(studentId));
+  }
+  statements.push(env.ECO_DB.prepare("DELETE FROM student_roster WHERE class_number = 9 AND student_number = 99 AND normalized_name = ?").bind(normalizeStudentName("테스트학생")));
+  if (student) statements.push(env.ECO_DB.prepare("DELETE FROM students WHERE id = ?").bind(studentId));
+  statements.push(syncStatement(env.ECO_DB, cleanup));
+  await env.ECO_DB.batch(statements);
+
+  await Promise.all(observationResult.results.map(function (item) { return env.ECO_PHOTOS.delete(item.photo_key); }));
+  context.waitUntil(syncSheetEvent(env, cleanup));
+  return json({
+    ok: true,
+    deleted: {
+      account: 1,
+      observations: observationIds.length,
+      guides: guideIds.length,
+      photos: observationResult.results.length
+    },
+    sheet_sync_queued: true
   });
 }
 

@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.2.0";
+const ECO_QUEST_VERSION = "1.3.0";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -195,6 +195,19 @@ function handleEvent_(body) {
       refreshSubmission_(data.student_id, now);
       return { id: data.guide_id, sheet: ECO_SHEETS.GUIDES.name };
 
+    case "test.cleanup":
+      const studentIds = stringArray_(data.student_ids);
+      const observationIds = stringArray_(data.observation_ids);
+      const guideIds = stringArray_(data.guide_ids);
+      const affectedStudentIds = stringArray_(data.affected_student_ids);
+      deleteRowsByValues_(ECO_SHEETS.GUIDES, 1, guideIds);
+      deleteRowsByValues_(ECO_SHEETS.OBSERVATIONS, 1, observationIds);
+      deleteRowsByValues_(ECO_SHEETS.REVIEWS, 4, studentIds.concat(observationIds, guideIds));
+      deleteRowsByValues_(ECO_SHEETS.SUBMISSIONS, 1, studentIds);
+      deleteRowsByValues_(ECO_SHEETS.STUDENTS, 1, studentIds);
+      affectedStudentIds.forEach(function (studentId) { refreshSubmission_(studentId, now); });
+      return { id: "test-account-9-99", sheet: "전체", count: studentIds.length + observationIds.length + guideIds.length };
+
     case "review.upsert":
       requireFields_(data, ["review_id", "target_id", "review_type"]);
       upsertRow_(ECO_SHEETS.REVIEWS, data.review_id, [
@@ -262,6 +275,21 @@ function findRowById_(sheet, id) {
     .matchEntireCell(true)
     .findNext();
   return match ? match.getRow() : 0;
+}
+
+function stringArray_(value) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function deleteRowsByValues_(definition, column, values) {
+  if (!values.length) return;
+  const sheet = getEcoSpreadsheet_().getSheetByName(definition.name);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  const targets = new Set(values.map(String));
+  const cells = sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getDisplayValues();
+  for (let index = cells.length - 1; index >= 0; index -= 1) {
+    if (targets.has(String(cells[index][0]))) sheet.deleteRow(index + 2);
+  }
 }
 
 function refreshSubmission_(studentId, now) {
