@@ -1,6 +1,7 @@
 const COOKIE_NAME = "eco_session";
 const SESSION_SECONDS = 60 * 60 * 10;
 const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const THUMBNAIL_MAX_BYTES = 150 * 1024;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
@@ -215,6 +216,7 @@ async function createObservation(context, user) {
   requireBindings(env, ["ECO_PHOTOS", "ECO_SHEETS_WEBHOOK_URL", "ECO_SHEETS_WEBHOOK_SECRET"]);
   const form = await request.formData();
   const photo = form.get("photo");
+  const thumbnail = validThumbnail(form.get("thumbnail"));
   if (!(photo instanceof File) || !photo.size) return json({ ok: false, error: "대표 사진을 선택해 주세요." }, 400);
   if (photo.size > PHOTO_MAX_BYTES) return json({ ok: false, error: "대표 사진은 8MB 이하여야 합니다." }, 413);
   const extension = PHOTO_TYPES.get(photo.type);
@@ -234,10 +236,19 @@ async function createObservation(context, user) {
   const id = crypto.randomUUID();
   const photoKey = "observations/" + id + "." + extension;
 
-  await env.ECO_PHOTOS.put(photoKey, photo.stream(), {
-    httpMetadata: { contentType: photo.type },
-    customMetadata: { observationId: id, studentId: user.id }
-  });
+  try {
+    await env.ECO_PHOTOS.put(photoKey, photo.stream(), {
+      httpMetadata: { contentType: photo.type },
+      customMetadata: { observationId: id, studentId: user.id }
+    });
+    if (thumbnail) await env.ECO_PHOTOS.put(photoKey + ".thumb.webp", thumbnail.stream(), {
+      httpMetadata: { contentType: "image/webp" }
+    });
+  } catch (error) {
+    await env.ECO_PHOTOS.delete(photoKey);
+    if (thumbnail) await env.ECO_PHOTOS.delete(photoKey + ".thumb.webp");
+    throw error;
+  }
 
   const origin = new URL(request.url).origin;
   const observation = {
@@ -272,21 +283,32 @@ async function createObservation(context, user) {
     ]);
   } catch (error) {
     await env.ECO_PHOTOS.delete(photoKey);
+    if (thumbnail) await env.ECO_PHOTOS.delete(photoKey + ".thumb.webp");
     throw error;
   }
   context.waitUntil(syncSheetEvent(env, sync));
   return json({ ok: true, observation }, 201);
 }
 
-async function getPhoto({ env }, id) {
+function validThumbnail(value) {
+  if (value == null) return null;
+  if (!(value instanceof File) || value.type !== "image/webp" || !value.size || value.size > THUMBNAIL_MAX_BYTES) {
+    throw new HttpError(400, "지도용 사진 형식이 올바르지 않습니다.");
+  }
+  return value;
+}
+
+async function getPhoto({ request, env }, id) {
   requireBindings(env, ["ECO_PHOTOS"]);
   const record = await env.ECO_DB.prepare("SELECT photo_key, photo_mime FROM observations WHERE id = ?").bind(id).first();
   if (!record) return json({ ok: false, error: "사진을 찾을 수 없습니다." }, 404);
-  const object = await env.ECO_PHOTOS.get(record.photo_key);
+  const wantsThumbnail = new URL(request.url).searchParams.get("thumb") === "1";
+  const thumbnail = wantsThumbnail ? await env.ECO_PHOTOS.get(record.photo_key + ".thumb.webp") : null;
+  const object = thumbnail || await env.ECO_PHOTOS.get(record.photo_key);
   if (!object) return json({ ok: false, error: "사진 파일을 찾을 수 없습니다." }, 404);
   return new Response(object.body, {
     headers: {
-      "Content-Type": object.httpMetadata && object.httpMetadata.contentType || record.photo_mime,
+      "Content-Type": thumbnail ? "image/webp" : object.httpMetadata && object.httpMetadata.contentType || record.photo_mime,
       "Cache-Control": "private, max-age=300",
       "X-Content-Type-Options": "nosniff"
     }
@@ -401,6 +423,7 @@ async function updateObservation(context, user, id) {
   const reason = text(form.get("identification_reason"), 5, 1500, "동정 근거");
   const source = text(form.get("source"), 2, 500, "참고 자료");
   const photo = form.get("photo");
+  const thumbnail = photo instanceof File && photo.size ? validThumbnail(form.get("thumbnail")) : null;
   let photoKey = original.photo_key;
   let photoMime = original.photo_mime;
   let newPhotoKey = null;
@@ -410,10 +433,19 @@ async function updateObservation(context, user, id) {
     const extension = PHOTO_TYPES.get(photo.type);
     if (!extension) return json({ ok: false, error: "JPG, PNG, WEBP 또는 HEIC 사진만 등록할 수 있습니다." }, 400);
     newPhotoKey = "observations/" + id + "-" + crypto.randomUUID() + "." + extension;
-    await env.ECO_PHOTOS.put(newPhotoKey, photo.stream(), {
-      httpMetadata: { contentType: photo.type },
-      customMetadata: { observationId: id, studentId: user.id }
-    });
+    try {
+      await env.ECO_PHOTOS.put(newPhotoKey, photo.stream(), {
+        httpMetadata: { contentType: photo.type },
+        customMetadata: { observationId: id, studentId: user.id }
+      });
+      if (thumbnail) await env.ECO_PHOTOS.put(newPhotoKey + ".thumb.webp", thumbnail.stream(), {
+        httpMetadata: { contentType: "image/webp" }
+      });
+    } catch (error) {
+      await env.ECO_PHOTOS.delete(newPhotoKey);
+      if (thumbnail) await env.ECO_PHOTOS.delete(newPhotoKey + ".thumb.webp");
+      throw error;
+    }
     photoKey = newPhotoKey;
     photoMime = photo.type;
   }
@@ -448,11 +480,15 @@ async function updateObservation(context, user, id) {
       syncStatement(env.ECO_DB, sync)
     ]);
   } catch (error) {
-    if (newPhotoKey) await env.ECO_PHOTOS.delete(newPhotoKey);
+    if (newPhotoKey) {
+      await env.ECO_PHOTOS.delete(newPhotoKey);
+      if (thumbnail) await env.ECO_PHOTOS.delete(newPhotoKey + ".thumb.webp");
+    }
     throw error;
   }
   if (newPhotoKey && original.photo_key !== newPhotoKey) {
     context.waitUntil(env.ECO_PHOTOS.delete(original.photo_key));
+    context.waitUntil(env.ECO_PHOTOS.delete(original.photo_key + ".thumb.webp"));
   }
   context.waitUntil(syncSheetEvent(env, sync));
   for (let offset = 0; offset < guideSyncEvents.length; offset += 50) {
@@ -780,7 +816,9 @@ async function deleteTestAccount(context, user) {
   statements.push(syncStatement(env.ECO_DB, cleanup));
   await env.ECO_DB.batch(statements);
 
-  await Promise.all(observationResult.results.map(function (item) { return env.ECO_PHOTOS.delete(item.photo_key); }));
+  await Promise.all(observationResult.results.flatMap(function (item) {
+    return [env.ECO_PHOTOS.delete(item.photo_key), env.ECO_PHOTOS.delete(item.photo_key + ".thumb.webp")];
+  }));
   context.waitUntil(syncSheetEvent(env, cleanup));
   return json({
     ok: true,

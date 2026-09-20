@@ -26,6 +26,7 @@
   var selectedSpecies;
   var selectedGuideObservation;
   var markerClusterer;
+  var studentPhotoMapRenderer;
   var candidatePhotoCache = {};
   var guideCardMap;
   var guideCardMarker;
@@ -43,6 +44,7 @@
   var adminMap;
   var adminMapClusterer;
   var adminMapMarkers = [];
+  var adminPhotoMapRenderer;
   var adminRecordPreviousFocus;
   var currentReflection;
 
@@ -345,6 +347,7 @@
           minLevel: 1,
           disableClickZoom: false
         });
+        studentPhotoMapRenderer = createPhotoMapRenderer(kakaoMap, markerClusterer, renderObservationInspector);
 
         var schoolMarker = new window.kakao.maps.Marker({
           map: kakaoMap,
@@ -398,17 +401,21 @@
 
   function updateMarkers() {
     var visibleMarkers = [];
+    var visibleItems = [];
     observationMarkers.forEach(function (item) {
       var classMatches = currentClass === "all" || String(item.data.class_number) === currentClass;
       var kindMatches = currentFilter === "all" || item.kind === currentFilter;
       var visible = classMatches && kindMatches;
       item.marker.setMap(null);
-      if (visible) visibleMarkers.push(item.marker);
+      if (visible) {
+        visibleMarkers.push(item.marker);
+        visibleItems.push(item);
+      }
     });
-    if (markerClusterer) {
-      markerClusterer.clear();
-      markerClusterer.addMarkers(visibleMarkers);
-    }
+    if (studentPhotoMapRenderer) studentPhotoMapRenderer.setItems([]);
+    if (markerClusterer) markerClusterer.clear();
+    if (studentPhotoMapRenderer) studentPhotoMapRenderer.setItems(visibleItems);
+    if (markerClusterer) markerClusterer.addMarkers(visibleMarkers);
     var visibleCount = visibleMarkers.length;
     var classText = currentClass === "all" ? "9개 반" : currentClass + "반";
     var filterText = currentFilter === "all" ? "전체 분류" : document.querySelector('[data-filter="' + currentFilter + '"]').textContent.trim();
@@ -446,6 +453,76 @@
         '<button class="primary-button inspector-guide-button" type="button" data-make-guide="' + escapeHtml(observation.id) + '">' + guideButtonLabel + '</button>' +
         (currentUser && observation.student_id === currentUser.id ? '<button class="secondary-button inspector-edit-button" type="button" data-edit-observation="' + escapeHtml(observation.id) + '">✎ 내가 등록한 발견 수정</button>' : '') +
       '</div>';
+  }
+
+  function mapThumbnailUrl(photoUrl) {
+    return photoUrl + (photoUrl.indexOf("?") === -1 ? "?" : "&") + "thumb=1";
+  }
+
+  function createPhotoMapRenderer(map, clusterer, onSelect) {
+    var items = [];
+    var overlays = [];
+
+    function clear() {
+      overlays.forEach(function (overlay) { overlay.setMap(null); });
+      overlays = [];
+    }
+
+    function addPhoto(position, observation, count, onClick) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "map-photo-marker" + (count > 1 ? " grouped" : "");
+      button.title = count > 1 ? observation.species_name + " 외 " + count + "건 · 확대해서 보기" : observation.species_name + " 관찰 보기";
+      button.setAttribute("aria-label", button.title);
+      var image = document.createElement("img");
+      image.src = mapThumbnailUrl(observation.photo_url);
+      image.alt = "";
+      image.loading = "lazy";
+      image.addEventListener("error", function () { image.hidden = true; button.classList.add("image-error"); });
+      button.appendChild(image);
+      if (count > 1) {
+        var badge = document.createElement("b");
+        badge.textContent = count + "건";
+        button.appendChild(badge);
+      }
+      button.addEventListener("click", function (event) {
+        event.stopPropagation();
+        onClick();
+      });
+      overlays.push(new window.kakao.maps.CustomOverlay({ map: map, position: position, content: button, yAnchor: 1.25, zIndex: 5 }));
+    }
+
+    window.kakao.maps.event.addListener(clusterer, "clustered", function (clusters) {
+      clear();
+      if (!items.length) return;
+      var bounds = map.getBounds();
+      var byMarker = new Map(items.map(function (item) { return [item.marker, item.data]; }));
+      var grouped = new Set();
+      var shownGroups = 0;
+      clusters.forEach(function (cluster) {
+        if (cluster.getSize() < 2) return;
+        var members = cluster.getMarkers();
+        members.forEach(function (marker) { grouped.add(marker); });
+        var representative = members.map(function (marker) { return byMarker.get(marker); }).find(Boolean);
+        if (!representative || shownGroups >= 8 || !bounds.contain(cluster.getCenter())) return;
+        shownGroups += 1;
+        addPhoto(cluster.getCenter(), representative, cluster.getSize(), function () {
+          if (map.getLevel() > 1) map.setLevel(map.getLevel() - 1, { anchor: cluster.getCenter() });
+          else onSelect(representative);
+        });
+      });
+      var singleLimit = map.getLevel() <= 3 ? 16 : map.getLevel() === 4 ? 8 : 0;
+      var shownSingles = 0;
+      items.forEach(function (item) {
+        if (shownSingles >= singleLimit || grouped.has(item.marker) || !bounds.contain(item.marker.getPosition())) return;
+        shownSingles += 1;
+        addPhoto(item.marker.getPosition(), item.data, 1, function () { onSelect(item.data); });
+      });
+    });
+
+    return {
+      setItems: function (nextItems) { items = nextItems; clear(); }
+    };
   }
 
   function openObservationEditor(observation) {
@@ -512,7 +589,10 @@
     var button = document.getElementById("save-observation-edit");
     button.disabled = true;
     button.textContent = "저장 중…";
-    api("observations/" + encodeURIComponent(id), { method: "PATCH", body: form }).then(function (result) {
+    (photo ? makeMapThumbnail(photo) : Promise.resolve(null)).then(function (thumbnail) {
+      if (thumbnail) form.append("thumbnail", thumbnail, thumbnail.name);
+      return api("observations/" + encodeURIComponent(id), { method: "PATCH", body: form });
+    }).then(function (result) {
       var index = observations.findIndex(function (item) { return item.id === id; });
       if (index >= 0) observations[index] = result.observation;
       closeObservationEditor();
@@ -1118,9 +1198,33 @@
 
   function preparePhoto(file) {
     return optimizePhoto(file).then(function (optimizedFile) {
-      return fileAsDataUrl(optimizedFile).then(function (url) {
-        return { file: optimizedFile, url: url };
+      return Promise.all([fileAsDataUrl(optimizedFile), makeMapThumbnail(optimizedFile)]).then(function (result) {
+        return { file: optimizedFile, url: result[0], thumbnail: result[1] };
       });
+    });
+  }
+
+  function makeMapThumbnail(file) {
+    return new Promise(function (resolve) {
+      var image = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      image.addEventListener("load", function () {
+        URL.revokeObjectURL(objectUrl);
+        var canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 160;
+        var context = canvas.getContext("2d");
+        context.fillStyle = "#e8efd7";
+        context.fillRect(0, 0, 160, 160);
+        var scale = Math.min(160 / image.naturalWidth, 160 / image.naturalHeight);
+        var width = image.naturalWidth * scale;
+        var height = image.naturalHeight * scale;
+        context.drawImage(image, (160 - width) / 2, (160 - height) / 2, width, height);
+        canvas.toBlob(function (blob) {
+          resolve(blob && blob.type === "image/webp" && blob.size <= 150 * 1024 ? new File([blob], "map-thumbnail.webp", { type: "image/webp" }) : null);
+        }, "image/webp", 0.72);
+      });
+      image.addEventListener("error", function () { URL.revokeObjectURL(objectUrl); resolve(null); });
+      image.src = objectUrl;
     });
   }
 
@@ -1334,6 +1438,7 @@
     var button = this;
     var form = new FormData();
     form.append("photo", photos[0].file, photos[0].file.name);
+    if (photos[0].thumbnail) form.append("thumbnail", photos[0].thumbnail, photos[0].thumbnail.name);
     form.append("latitude", selectedLocation.lat);
     form.append("longitude", selectedLocation.lng);
     form.append("place_name", selectedLocation.name);
@@ -1877,7 +1982,8 @@
         });
         adminMap.addControl(new window.kakao.maps.MapTypeControl(), window.kakao.maps.ControlPosition.TOPRIGHT);
         adminMap.addControl(new window.kakao.maps.ZoomControl(), window.kakao.maps.ControlPosition.RIGHT);
-        adminMapClusterer = new window.kakao.maps.MarkerClusterer({ map: adminMap, averageCenter: true, minLevel: 5 });
+        adminMapClusterer = new window.kakao.maps.MarkerClusterer({ map: adminMap, averageCenter: true, minLevel: 1 });
+        adminPhotoMapRenderer = createPhotoMapRenderer(adminMap, adminMapClusterer, openAdminObservation);
       }
       adminMap.relayout();
       renderAdminMap();
@@ -1893,6 +1999,7 @@
       return adminObservationCard(item, adminObservations.indexOf(item), true);
     }).join("") : '<p class="empty-message">조건에 맞는 관찰이 없습니다.</p>';
     if (!adminMap) return;
+    if (adminPhotoMapRenderer) adminPhotoMapRenderer.setItems([]);
     if (adminMapClusterer) adminMapClusterer.clear();
     adminMapMarkers.forEach(function (marker) { marker.setMap(null); });
     adminMapMarkers = filtered.map(function (item) {
@@ -1903,6 +2010,9 @@
       window.kakao.maps.event.addListener(marker, "click", function () { openAdminObservation(item); });
       return marker;
     });
+    if (adminPhotoMapRenderer) adminPhotoMapRenderer.setItems(adminMapMarkers.map(function (marker, index) {
+      return { marker: marker, data: filtered[index] };
+    }));
     if (adminMapClusterer) adminMapClusterer.addMarkers(adminMapMarkers);
     if (filtered.length === 1) {
       adminMap.setCenter(new window.kakao.maps.LatLng(Number(filtered[0].latitude), Number(filtered[0].longitude)));
