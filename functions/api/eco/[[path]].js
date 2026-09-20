@@ -40,6 +40,8 @@ async function route(context) {
   if (method === "GET" && path === "me") return json({ ok: true, user: publicUser(user) });
   if (method === "GET" && path === "observations") return listObservations(context, user);
   if (method === "POST" && path === "observations") return createObservation(context, user);
+  const observationEditMatch = path.match(/^observations\/([0-9a-f-]{36})$/i);
+  if (method === "PATCH" && observationEditMatch) return updateObservation(context, user, observationEditMatch[1]);
 
   const photoMatch = path.match(/^photos\/([0-9a-f-]{36})$/i);
   if (method === "GET" && photoMatch) return getPhoto(context, photoMatch[1]);
@@ -204,7 +206,7 @@ async function listObservations({ request, env }, user) {
     "SELECT id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_reason, source, identification_status, review_status, created_at, updated_at FROM observations" + where + " ORDER BY created_at DESC LIMIT 1000"
   ).bind(...values).all();
   const origin = new URL(request.url).origin;
-  return json({ ok: true, observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id }; }), viewer: user.role });
+  return json({ ok: true, observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id + "?v=" + encodeURIComponent(row.updated_at) }; }), viewer: user.role });
 }
 
 async function createObservation(context, user) {
@@ -294,10 +296,10 @@ async function getPhoto({ env }, id) {
 async function listGuides({ request, env }, user) {
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
   const result = await env.ECO_DB.prepare(
-    "SELECT g.*, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
+    "SELECT g.*, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
   ).bind(user.id).all();
   const origin = new URL(request.url).origin;
-  return json({ ok: true, guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id }; }), guide_limit: user.guide_limit });
+  return json({ ok: true, guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) }; }), guide_limit: user.guide_limit });
 }
 
 async function createGuide(context, user) {
@@ -376,6 +378,69 @@ async function ensureRosterSchema(env) {
     });
   }
   await rosterSchemaPromise;
+}
+
+async function updateObservation(context, user, id) {
+  const { request, env } = context;
+  if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  const original = await env.ECO_DB.prepare("SELECT * FROM observations WHERE id = ?").bind(id).first();
+  if (!original) return json({ ok: false, error: "관찰 기록을 찾을 수 없습니다." }, 404);
+  if (original.student_id !== user.id) return json({ ok: false, error: "본인이 등록한 관찰 기록만 수정할 수 있습니다." }, 403);
+  const form = await request.formData();
+  const latitude = decimal(form.get("latitude"), -90, 90, "위도");
+  const longitude = decimal(form.get("longitude"), -180, 180, "경도");
+  const placeName = text(form.get("place_name"), 2, 100, "구체적인 장소");
+  const category = String(form.get("category") || "");
+  if (!CATEGORIES.has(category)) return json({ ok: false, error: "생물 분류를 선택해 주세요." }, 400);
+  const speciesName = text(form.get("species_name"), 1, 80, "생물 이름");
+  const scientificName = optionalText(form.get("scientific_name"), 120, "학명");
+  const features = text(form.get("features"), 5, 1000, "관찰 특징");
+  const reason = text(form.get("identification_reason"), 5, 1500, "동정 근거");
+  const source = text(form.get("source"), 2, 500, "참고 자료");
+  const photo = form.get("photo");
+  let photoKey = original.photo_key;
+  let photoMime = original.photo_mime;
+  let newPhotoKey = null;
+  if (photo instanceof File && photo.size) {
+    requireBindings(env, ["ECO_PHOTOS"]);
+    if (photo.size > PHOTO_MAX_BYTES) return json({ ok: false, error: "대표 사진은 8MB 이하여야 합니다." }, 413);
+    const extension = PHOTO_TYPES.get(photo.type);
+    if (!extension) return json({ ok: false, error: "JPG, PNG, WEBP 또는 HEIC 사진만 등록할 수 있습니다." }, 400);
+    newPhotoKey = "observations/" + id + "-" + crypto.randomUUID() + "." + extension;
+    await env.ECO_PHOTOS.put(newPhotoKey, photo.stream(), {
+      httpMetadata: { contentType: photo.type },
+      customMetadata: { observationId: id, studentId: user.id }
+    });
+    photoKey = newPhotoKey;
+    photoMime = photo.type;
+  }
+  const now = new Date().toISOString();
+  const origin = new URL(request.url).origin;
+  const observation = {
+    id, observation_id: id, class_number: original.class_number, group_number: original.group_number,
+    student_id: original.student_id, student_name: original.student_name,
+    created_at: original.created_at, latitude, longitude, place_name: placeName,
+    category, species_name: speciesName, scientific_name: scientificName,
+    features, identification_reason: reason, source,
+    identification_status: original.identification_status, review_status: original.review_status,
+    photo_url: origin + "/api/eco/photos/" + id + "?v=" + encodeURIComponent(now), updated_at: now
+  };
+  const sync = makeSyncEvent("observation.upsert", id, observation);
+  try {
+    await env.ECO_DB.batch([
+      env.ECO_DB.prepare("UPDATE observations SET latitude = ?, longitude = ?, place_name = ?, category = ?, species_name = ?, scientific_name = ?, features = ?, identification_reason = ?, source = ?, photo_key = ?, photo_mime = ?, updated_at = ? WHERE id = ? AND student_id = ?")
+        .bind(latitude, longitude, placeName, category, speciesName, scientificName, features, reason, source, photoKey, photoMime, now, id, user.id),
+      syncStatement(env.ECO_DB, sync)
+    ]);
+  } catch (error) {
+    if (newPhotoKey) await env.ECO_PHOTOS.delete(newPhotoKey);
+    throw error;
+  }
+  if (newPhotoKey && original.photo_key !== newPhotoKey) {
+    context.waitUntil(env.ECO_PHOTOS.delete(original.photo_key));
+  }
+  context.waitUntil(syncSheetEvent(env, sync));
+  return json({ ok: true, observation });
 }
 
 async function ensureReflectionSchema(env) {
@@ -492,14 +557,14 @@ async function listAdminGuides({ request, env }, user) {
   const classNumber = classValue && classValue !== "all" ? integer(classValue, 1, 9, "반") : null;
   const where = classNumber ? " WHERE st.class_number = ?" : "";
   const statement = env.ECO_DB.prepare(
-    "SELECT g.*, st.class_number, st.student_number, st.student_name, st.group_number, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at FROM field_guides g JOIN students st ON st.id = g.student_id JOIN observations o ON o.id = g.observation_id" + where + " ORDER BY st.class_number, st.student_number, g.updated_at DESC LIMIT 1000"
+    "SELECT g.*, st.class_number, st.student_number, st.student_name, st.group_number, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN students st ON st.id = g.student_id JOIN observations o ON o.id = g.observation_id" + where + " ORDER BY st.class_number, st.student_number, g.updated_at DESC LIMIT 1000"
   );
   const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
   const origin = new URL(request.url).origin;
   return json({
     ok: true,
     guides: result.results.map(function (row) {
-      return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id };
+      return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) };
     })
   });
 }

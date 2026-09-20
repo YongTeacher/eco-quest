@@ -7,7 +7,7 @@
  * never be committed to GitHub or exposed to the browser.
  */
 
-const ECO_QUEST_VERSION = "1.4.1";
+const ECO_QUEST_VERSION = "1.4.2";
 
 const ECO_SHEETS = Object.freeze({
   DASHBOARD: {
@@ -194,6 +194,7 @@ function handleEvent_(body) {
         safeCell_(data.source || ""), safeUrl_(data.photo_url || ""), safeCell_(data.identification_status || "학생 동정"),
         safeCell_(data.review_status || "정상"), toDate_(data.updated_at), now
       ]);
+      refreshGuidesForObservation_(data);
       return { id: data.observation_id, sheet: ECO_SHEETS.OBSERVATIONS.name };
 
     case "guide.upsert":
@@ -264,6 +265,21 @@ function replaceStudentRoster_(students, now) {
   if (oldRows) sheet.getRange(2, 1, oldRows, ECO_SHEETS.STUDENTS.headers.length).clearContent();
   sheet.getRange(2, 1, values.length, ECO_SHEETS.STUDENTS.headers.length).setValues(values);
   sheet.getRange(2, 2, values.length, 4).setHorizontalAlignment("center");
+}
+
+function refreshGuidesForObservation_(observation) {
+  const sheet = getEcoSpreadsheet_().getSheetByName(ECO_SHEETS.GUIDES.name);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, ECO_SHEETS.GUIDES.headers.length).getValues();
+  rows.forEach(function (row, index) {
+    if (String(row[6]) !== String(observation.observation_id)) return;
+    row[7] = safeCell_(observation.species_name || "");
+    row[8] = safeCell_(observation.scientific_name || "");
+    row[9] = safeCell_(observation.category || "");
+    row[15] = safeUrl_(observation.photo_url || "");
+    row[18] = new Date();
+    sheet.getRange(index + 2, 1, 1, ECO_SHEETS.GUIDES.headers.length).setValues([row]);
+  });
 }
 
 function syncReflectionRosterFromStudentSheet_(spreadsheet, now) {

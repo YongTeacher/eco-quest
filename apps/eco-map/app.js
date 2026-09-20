@@ -33,6 +33,10 @@
   var pendingRosterRows = [];
   var rosterStudents = [];
   var qrPreviousFocus;
+  var activeGuideIndex = -1;
+  var editingObservation = null;
+  var editLocation = null;
+  var pickerTarget = "discover";
   var adminObservations = [];
   var adminGuides = [];
   var adminReflections = [];
@@ -439,8 +443,87 @@
         '<p><i>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</i></p>' +
         '<div class="species-list"><h4>발견 기록</h4><span>' + escapeHtml(observation.place_name) + '</span><span>' + escapeHtml(observation.class_number + "반 " + observation.group_number + "모둠 · " + observation.student_name) + '</span></div>' +
         '<button class="primary-button inspector-guide-button" type="button" data-make-guide="' + escapeHtml(observation.id) + '">' + guideButtonLabel + '</button>' +
+        (currentUser && observation.student_id === currentUser.id ? '<button class="secondary-button inspector-edit-button" type="button" data-edit-observation="' + escapeHtml(observation.id) + '">✎ 내가 등록한 발견 수정</button>' : '') +
       '</div>';
   }
+
+  function openObservationEditor(observation) {
+    if (!currentUser || observation.student_id !== currentUser.id) return;
+    editingObservation = observation;
+    editLocation = { lat: Number(observation.latitude), lng: Number(observation.longitude), name: observation.place_name };
+    document.getElementById("observation-edit-photo-preview").src = observation.photo_url;
+    document.getElementById("observation-edit-photo").value = "";
+    document.getElementById("observation-edit-category").value = observation.category;
+    document.getElementById("observation-edit-species").value = observation.species_name;
+    document.getElementById("observation-edit-scientific").value = observation.scientific_name || "";
+    document.getElementById("observation-edit-place").value = observation.place_name;
+    document.getElementById("observation-edit-features").value = observation.features || "";
+    document.getElementById("observation-edit-reason").value = observation.identification_reason || "";
+    document.getElementById("observation-edit-source").value = observation.source || "";
+    document.getElementById("observation-edit-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("observation-edit-species").focus();
+  }
+
+  function closeObservationEditor() {
+    document.getElementById("observation-edit-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+    document.getElementById("observation-edit-form").reset();
+    editingObservation = null;
+    editLocation = null;
+  }
+
+  document.getElementById("observation-edit-photo").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    fileAsDataUrl(file).then(function (url) {
+      if (editingObservation) document.getElementById("observation-edit-photo-preview").src = url;
+    }).catch(function (error) { showToast(error.message); });
+  });
+
+  document.getElementById("map-inspector").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-edit-observation]");
+    if (!button) return;
+    var observation = observations.find(function (item) { return item.id === button.dataset.editObservation; });
+    if (observation) openObservationEditor(observation);
+  });
+  document.getElementById("close-observation-edit").addEventListener("click", closeObservationEditor);
+  document.getElementById("cancel-observation-edit").addEventListener("click", closeObservationEditor);
+  document.getElementById("observation-edit-modal").addEventListener("click", function (event) {
+    if (event.target === this) closeObservationEditor();
+  });
+  document.getElementById("observation-edit-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!editingObservation || !editLocation) return;
+    var id = editingObservation.id;
+    var form = new FormData();
+    form.append("latitude", editLocation.lat);
+    form.append("longitude", editLocation.lng);
+    form.append("place_name", editLocation.name);
+    form.append("category", document.getElementById("observation-edit-category").value);
+    form.append("species_name", document.getElementById("observation-edit-species").value.trim());
+    form.append("scientific_name", document.getElementById("observation-edit-scientific").value.trim());
+    form.append("features", document.getElementById("observation-edit-features").value.trim());
+    form.append("identification_reason", document.getElementById("observation-edit-reason").value.trim());
+    form.append("source", document.getElementById("observation-edit-source").value.trim());
+    var photo = document.getElementById("observation-edit-photo").files[0];
+    if (photo) form.append("photo", photo, photo.name);
+    var button = document.getElementById("save-observation-edit");
+    button.disabled = true;
+    button.textContent = "저장 중…";
+    api("observations/" + encodeURIComponent(id), { method: "PATCH", body: form }).then(function (result) {
+      var index = observations.findIndex(function (item) { return item.id === id; });
+      if (index >= 0) observations[index] = result.observation;
+      closeObservationEditor();
+      loadStudentData().then(function () { renderObservationInspector(result.observation); });
+      showToast("발견 기록을 수정하고 Google Sheets 동기화 대기열에 저장했습니다.");
+    }).catch(function (error) {
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "수정 내용 저장";
+    });
+  });
 
   function safeExternalUrl(value) {
     try {
@@ -457,7 +540,7 @@
 
   function loadStudentData() {
     if (!currentUser || currentUser.role !== "student") return;
-    Promise.all([api("observations"), api("guides")]).then(function (results) {
+    return Promise.all([api("observations"), api("guides")]).then(function (results) {
       observations = results[0].observations || [];
       guides = results[1].guides || [];
       dexLimit = Number(results[1].guide_limit || currentUser.guide_limit || 3);
@@ -622,6 +705,7 @@
   }
 
   function openGuideCard(guide, index) {
+    activeGuideIndex = index;
     var observation = observations.find(function (item) { return item.id === guide.observation_id; }) || {};
     var placeName = guide.place_name || observation.place_name || "장소 미기록";
     var latitude = Number(guide.latitude || observation.latitude);
@@ -656,6 +740,7 @@
 
   function closeGuideCard() {
     guideCardMapRequest += 1;
+    activeGuideIndex = -1;
     document.getElementById("guide-card-modal").hidden = true;
     document.body.classList.remove("modal-open");
     guideCardMarker = null;
@@ -670,6 +755,13 @@
   });
 
   document.getElementById("close-guide-card").addEventListener("click", closeGuideCard);
+  document.getElementById("edit-guide-from-card").addEventListener("click", function () {
+    var guide = guides[activeGuideIndex];
+    var observation = guide && observations.find(function (item) { return item.id === guide.observation_id; });
+    if (!observation) { showToast("연결된 관찰 기록을 찾을 수 없습니다."); return; }
+    closeGuideCard();
+    openGuideEditor(observation);
+  });
   document.getElementById("guide-card-modal").addEventListener("click", function (event) {
     if (event.target === this) closeGuideCard();
   });
@@ -838,8 +930,9 @@
   function openLocationPicker() {
     var modal = document.getElementById("location-picker-modal");
     pickerPreviousFocus = document.activeElement;
-    pendingLocation = selectedLocation ? { lat: selectedLocation.lat, lng: selectedLocation.lng } : null;
-    document.getElementById("specific-location-name").value = selectedLocation ? selectedLocation.name : "";
+    var currentPickerLocation = pickerTarget === "edit" ? editLocation : selectedLocation;
+    pendingLocation = currentPickerLocation ? { lat: currentPickerLocation.lat, lng: currentPickerLocation.lng } : null;
+    document.getElementById("specific-location-name").value = currentPickerLocation ? currentPickerLocation.name : "";
     document.getElementById("picker-status").innerHTML = '<i class="live-dot"></i> ' + (pendingLocation ? "저장된 핀을 확인하거나 새 위치를 눌러주세요." : "지도를 눌러 핀을 놓아주세요.");
     document.getElementById("picker-map-loading").hidden = false;
     document.getElementById("picker-map-loading").classList.remove("error");
@@ -862,12 +955,22 @@
 
   function closeLocationPicker() {
     document.getElementById("location-picker-modal").hidden = true;
-    document.body.classList.remove("modal-open");
+    if (pickerTarget === "edit" && editingObservation) {
+      document.getElementById("observation-edit-modal").hidden = false;
+    } else {
+      document.body.classList.remove("modal-open");
+    }
+    pickerTarget = "discover";
     if (pickerPreviousFocus && typeof pickerPreviousFocus.focus === "function") pickerPreviousFocus.focus();
   }
 
-  document.getElementById("open-location-picker").addEventListener("click", openLocationPicker);
-  document.getElementById("observation-location").addEventListener("click", openLocationPicker);
+  document.getElementById("open-location-picker").addEventListener("click", function () { pickerTarget = "discover"; openLocationPicker(); });
+  document.getElementById("observation-location").addEventListener("click", function () { pickerTarget = "discover"; openLocationPicker(); });
+  document.getElementById("observation-edit-pick-location").addEventListener("click", function () {
+    pickerTarget = "edit";
+    document.getElementById("observation-edit-modal").hidden = true;
+    openLocationPicker();
+  });
   document.getElementById("close-location-picker").addEventListener("click", closeLocationPicker);
   document.getElementById("cancel-location-picker").addEventListener("click", closeLocationPicker);
   document.getElementById("location-picker-modal").addEventListener("click", function (event) {
@@ -879,6 +982,7 @@
     else if (!document.getElementById("guide-card-modal").hidden) closeGuideCard();
     else if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
+    else if (!document.getElementById("observation-edit-modal").hidden) closeObservationEditor();
   });
   document.getElementById("specific-location-name").addEventListener("input", updatePickerConfirmation);
 
@@ -905,6 +1009,13 @@
     var name = document.getElementById("specific-location-name").value.trim();
     if (!pendingLocation || !name) {
       showToast("지도 핀과 구체적인 장소명을 모두 입력해 주세요.");
+      return;
+    }
+    if (pickerTarget === "edit") {
+      editLocation = { lat: pendingLocation.lat, lng: pendingLocation.lng, name: name };
+      document.getElementById("observation-edit-place").value = name;
+      closeLocationPicker();
+      showToast("수정할 발견 위치를 선택했습니다.");
       return;
     }
     selectedLocation = { lat: pendingLocation.lat, lng: pendingLocation.lng, name: name };

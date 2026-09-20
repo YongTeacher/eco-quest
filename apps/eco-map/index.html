@@ -482,6 +482,29 @@
     <section class="field-guide-dialog">
       <button id="close-guide-card" class="modal-close field-guide-close" type="button" aria-label="생물도감 카드 닫기">×</button>
       <article id="guide-card-detail" class="field-guide-infographic"></article>
+      <button id="edit-guide-from-card" class="primary-button guide-card-edit" type="button">✎ 이 도감 수정하기</button>
+    </section>
+  </div>
+
+  <div id="observation-edit-modal" class="location-picker-modal" role="dialog" aria-modal="true" aria-labelledby="observation-edit-title" hidden>
+    <section class="location-picker-card guide-editor-card">
+      <header class="location-picker-header"><div><span class="pixel-label">EDIT OBSERVATION</span><h2 id="observation-edit-title">내 발견 기록 수정</h2><p>대표 사진을 바꾸려면 새 사진을 선택하세요. 선택하지 않으면 기존 사진이 유지됩니다.</p></div><button id="close-observation-edit" class="modal-close" type="button" aria-label="발견 기록 수정 닫기">×</button></header>
+      <form id="observation-edit-form">
+        <div class="guide-editor-body observation-edit-body">
+          <img id="observation-edit-photo-preview" class="observation-edit-photo" alt="현재 대표 사진" />
+          <label class="field-label">대표 사진 교체 (선택)<input id="observation-edit-photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" /></label>
+          <div class="guide-form-grid">
+            <label class="field-label">생물 분류<select id="observation-edit-category" required><option value="plant">식물</option><option value="insect">곤충</option><option value="bird">조류</option><option value="animal">포유류</option><option value="water">양서·파충류·수생생물</option><option value="fungi">균류</option><option value="etc">기타</option></select></label>
+            <label class="field-label">생물 이름<input id="observation-edit-species" maxlength="80" required /></label>
+            <label class="field-label full">학명<input id="observation-edit-scientific" maxlength="120" /></label>
+            <label class="field-label full">발견 위치<div class="location-field"><span>⌖</span><input id="observation-edit-place" readonly required /><button id="observation-edit-pick-location" type="button">지도에서 수정</button></div></label>
+            <label class="field-label full">관찰 특징<textarea id="observation-edit-features" minlength="5" maxlength="1000" rows="3" required></textarea></label>
+            <label class="field-label full">동정 근거<textarea id="observation-edit-reason" minlength="5" maxlength="1500" rows="3" required></textarea></label>
+            <label class="field-label full">참고 자료<input id="observation-edit-source" minlength="2" maxlength="500" required /></label>
+          </div>
+        </div>
+        <footer class="location-picker-actions"><button id="cancel-observation-edit" class="secondary-button" type="button">취소</button><button id="save-observation-edit" class="primary-button" type="submit">수정 내용 저장</button></footer>
+      </form>
     </section>
   </div>
 
