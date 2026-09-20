@@ -990,7 +990,7 @@
   function closePhotoViewer() {
     document.getElementById("photo-viewer-modal").hidden = true;
     document.getElementById("photo-viewer-image").removeAttribute("src");
-    if (!Array.from(document.querySelectorAll(".location-picker-modal")).some(function (modal) { return !modal.hidden; })) {
+    if (!Array.from(document.querySelectorAll(".location-picker-modal, .qr-modal")).some(function (modal) { return !modal.hidden; })) {
       document.body.classList.remove("modal-open");
     }
     if (photoViewerPreviousFocus && photoViewerPreviousFocus.isConnected) photoViewerPreviousFocus.focus();
@@ -1927,6 +1927,7 @@
     var mapUrl = "https://map.kakao.com/link/map/" + encodeURIComponent(item.place_name) + "," + item.latitude + "," + item.longitude;
     openAdminRecord(item.species_name, item.class_number + "반 " + item.group_number + "모둠 · " + item.student_name,
       '<img class="admin-detail-photo" src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" />' +
+      '<button class="photo-view-button" type="button" data-view-photo="' + escapeHtml(item.photo_url) + '" data-photo-name="' + escapeHtml(item.species_name) + '">⤢ 사진 크게 보기</button>' +
       '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.identification_status || "학생 동정") + '</span><span>' + escapeHtml(item.review_status || "정상") + '</span></div>' +
       '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + ' <a href="' + escapeHtml(mapUrl) + '" target="_blank" rel="noopener noreferrer">지도에서 보기 ↗</a></dd><dt>관찰 특징</dt><dd>' + escapeHtml(item.features || "미기록") + '</dd><dt>동정 근거</dt><dd>' + escapeHtml(item.identification_reason || "미기록") + '</dd><dt>참고 자료</dt><dd>' + escapeHtml(item.source || "미기록") + '</dd><dt>등록일</dt><dd>' + escapeHtml(formatDate(item.created_at)) + '</dd></dl>');
   }
@@ -1956,6 +1957,7 @@
     var source = sourceUrl ? '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(item.source) + '</a>' : escapeHtml(item.source || "미기록");
     openAdminRecord(item.species_name, item.class_number + "반 " + item.student_number + "번 " + item.student_name,
       '<img class="admin-detail-photo" src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" />' +
+      '<button class="photo-view-button" type="button" data-view-photo="' + escapeHtml(item.photo_url) + '" data-photo-name="' + escapeHtml(item.species_name) + '">⤢ 사진 크게 보기</button>' +
       '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.status) + '</span></div>' +
       '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + '</dd><dt>서식지</dt><dd>' + escapeHtml(item.habitat) + '</dd><dt>주요 특징</dt><dd>' + escapeHtml(item.key_features) + '</dd><dt>생태계 역할</dt><dd>' + escapeHtml(item.ecological_role) + '</dd><dt>조사 보고서</dt><dd>' + escapeHtml(item.report) + '</dd><dt>참고 자료</dt><dd>' + source + '</dd><dt>수정일</dt><dd>' + escapeHtml(formatDate(item.updated_at)) + '</dd></dl>');
   }
