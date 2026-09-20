@@ -386,6 +386,9 @@ async function updateObservation(context, user, id) {
   const original = await env.ECO_DB.prepare("SELECT * FROM observations WHERE id = ?").bind(id).first();
   if (!original) return json({ ok: false, error: "관찰 기록을 찾을 수 없습니다." }, 404);
   if (original.student_id !== user.id) return json({ ok: false, error: "본인이 등록한 관찰 기록만 수정할 수 있습니다." }, 403);
+  const relatedGuides = await env.ECO_DB.prepare(
+    "SELECT g.*, s.class_number, s.student_number, s.student_name FROM field_guides g JOIN students s ON s.id = g.student_id WHERE g.observation_id = ?"
+  ).bind(id).all();
   const form = await request.formData();
   const latitude = decimal(form.get("latitude"), -90, 90, "위도");
   const longitude = decimal(form.get("longitude"), -180, 180, "경도");
@@ -426,6 +429,18 @@ async function updateObservation(context, user, id) {
     photo_url: origin + "/api/eco/photos/" + id + "?v=" + encodeURIComponent(now), updated_at: now
   };
   const sync = makeSyncEvent("observation.upsert", id, observation);
+  const guideSyncEvents = relatedGuides.results.map(function (guide) {
+    return makeSyncEvent("guide.upsert", guide.id, {
+      guide_id: guide.id, created_at: guide.created_at, updated_at: guide.updated_at,
+      student_id: guide.student_id, class_number: guide.class_number,
+      student_number: guide.student_number, student_name: guide.student_name,
+      observation_id: id, species_name: speciesName, scientific_name: scientificName,
+      category, place_name: placeName, latitude, longitude,
+      habitat: guide.habitat, key_features: guide.key_features,
+      ecological_role: guide.ecological_role, report: guide.report,
+      source: guide.source, status: guide.status, photo_url: observation.photo_url
+    });
+  });
   try {
     await env.ECO_DB.batch([
       env.ECO_DB.prepare("UPDATE observations SET latitude = ?, longitude = ?, place_name = ?, category = ?, species_name = ?, scientific_name = ?, features = ?, identification_reason = ?, source = ?, photo_key = ?, photo_mime = ?, updated_at = ? WHERE id = ? AND student_id = ?")
@@ -440,6 +455,11 @@ async function updateObservation(context, user, id) {
     context.waitUntil(env.ECO_PHOTOS.delete(original.photo_key));
   }
   context.waitUntil(syncSheetEvent(env, sync));
+  for (let offset = 0; offset < guideSyncEvents.length; offset += 50) {
+    const group = guideSyncEvents.slice(offset, offset + 50);
+    await env.ECO_DB.batch(group.map(function (event) { return syncStatement(env.ECO_DB, event); }));
+    group.forEach(function (event) { context.waitUntil(syncSheetEvent(env, event)); });
+  }
   return json({ ok: true, observation });
 }
 
