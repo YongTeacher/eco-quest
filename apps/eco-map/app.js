@@ -2039,7 +2039,8 @@
       '<img class="admin-detail-photo" src="' + escapeHtml(item.photo_url) + '" alt="' + escapeHtml(item.species_name) + ' 대표 사진" />' +
       '<button class="photo-view-button" type="button" data-view-photo="' + escapeHtml(item.photo_url) + '" data-photo-name="' + escapeHtml(item.species_name) + '">⤢ 사진 크게 보기</button>' +
       '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.identification_status || "학생 동정") + '</span><span>' + escapeHtml(item.review_status || "정상") + '</span></div>' +
-      '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + ' <a href="' + escapeHtml(mapUrl) + '" target="_blank" rel="noopener noreferrer">지도에서 보기 ↗</a></dd><dt>관찰 특징</dt><dd>' + escapeHtml(item.features || "미기록") + '</dd><dt>동정 근거</dt><dd>' + escapeHtml(item.identification_reason || "미기록") + '</dd><dt>참고 자료</dt><dd>' + escapeHtml(item.source || "미기록") + '</dd><dt>등록일</dt><dd>' + escapeHtml(formatDate(item.created_at)) + '</dd></dl>');
+      '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + ' <a href="' + escapeHtml(mapUrl) + '" target="_blank" rel="noopener noreferrer">지도에서 보기 ↗</a></dd><dt>관찰 특징</dt><dd>' + escapeHtml(item.features || "미기록") + '</dd><dt>동정 근거</dt><dd>' + escapeHtml(item.identification_reason || "미기록") + '</dd><dt>참고 자료</dt><dd>' + escapeHtml(item.source || "미기록") + '</dd><dt>등록일</dt><dd>' + escapeHtml(formatDate(item.created_at)) + '</dd></dl>' +
+      '<div class="admin-record-delete"><p>삭제하면 이 발견 기록과 연결된 개인 생물도감도 함께 삭제됩니다. 복구할 수 없으니 신중히 확인해 주세요.</p><button type="button" data-admin-delete-observation="' + escapeHtml(item.id) + '">이 관찰 기록 삭제</button></div>');
   }
 
   function loadAdminGuides() {
@@ -2146,6 +2147,32 @@
     if (observationCard && adminObservations[Number(observationCard.dataset.adminObservation)]) openAdminObservation(adminObservations[Number(observationCard.dataset.adminObservation)]);
     if (guideCard && adminGuides[Number(guideCard.dataset.adminGuide)]) openAdminGuide(adminGuides[Number(guideCard.dataset.adminGuide)]);
     if (reflectionButton && adminReflections[Number(reflectionButton.dataset.adminReflection)]) openAdminReflection(adminReflections[Number(reflectionButton.dataset.adminReflection)]);
+  });
+  document.getElementById("admin-record-detail").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-admin-delete-observation]");
+    if (!button || button.disabled) return;
+    var item = adminObservations.find(function (record) { return record.id === button.dataset.adminDeleteObservation; });
+    if (!item) return;
+    var warning = item.class_number + "반 " + item.student_name + " 학생의 ‘" + item.species_name + "’ 관찰 기록을 삭제할까요?\n\n연결된 개인 생물도감과 사진, 구글 시트의 해당 기록도 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.";
+    if (!window.confirm(warning)) return;
+    button.disabled = true;
+    button.textContent = "삭제하는 중…";
+    api("admin/observations/" + encodeURIComponent(item.id), { method: "DELETE" }).then(function (result) {
+      document.getElementById("close-admin-record").click();
+      adminObservations = adminObservations.filter(function (record) { return record.id !== item.id; });
+      adminGuides = adminGuides.filter(function (guide) { return guide.observation_id !== item.id; });
+      renderAdminObservationList();
+      renderAdminMap();
+      renderAdminGuides();
+      loadAdminOverview();
+      showToast("관찰 기록과 연결된 도감 " + result.deleted.guides + "개를 삭제했습니다." + (result.photo_cleanup_complete ? "" : " 사진 파일 정리는 관리자 확인이 필요합니다."));
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "이 관찰 기록 삭제";
+    });
   });
   document.getElementById("close-admin-record").addEventListener("click", function () {
     document.getElementById("admin-record-modal").hidden = true;

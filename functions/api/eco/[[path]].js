@@ -43,6 +43,8 @@ async function route(context) {
   if (method === "POST" && path === "observations") return createObservation(context, user);
   const observationEditMatch = path.match(/^observations\/([0-9a-f-]{36})$/i);
   if (method === "PATCH" && observationEditMatch) return updateObservation(context, user, observationEditMatch[1]);
+  const adminObservationMatch = path.match(/^admin\/observations\/([0-9a-f-]{36})$/i);
+  if (method === "DELETE" && adminObservationMatch) return deleteAdminObservation(context, user, adminObservationMatch[1]);
 
   const photoMatch = path.match(/^photos\/([0-9a-f-]{36})$/i);
   if (method === "GET" && photoMatch) return getPhoto(context, photoMatch[1]);
@@ -497,6 +499,66 @@ async function updateObservation(context, user, id) {
     group.forEach(function (event) { context.waitUntil(syncSheetEvent(env, event)); });
   }
   return json({ ok: true, observation });
+}
+
+async function deleteAdminObservation(context, user, id) {
+  const { env } = context;
+  requireTeacher(user);
+  requireBindings(env, ["ECO_PHOTOS"]);
+  const observation = await env.ECO_DB.prepare("SELECT id, photo_key FROM observations WHERE id = ?").bind(id).first();
+  if (!observation) return json({ ok: false, error: "이미 삭제되었거나 존재하지 않는 관찰 기록입니다." }, 404);
+
+  const guideResult = await env.ECO_DB.prepare("SELECT id, student_id FROM field_guides WHERE observation_id = ?").bind(id).all();
+  const guideIds = guideResult.results.map(function (guide) { return guide.id; });
+  const affectedStudentIds = Array.from(new Set(guideResult.results.map(function (guide) { return guide.student_id; })));
+  const targetIds = [id].concat(guideIds);
+  const targetPlaceholders = targetIds.map(function () { return "?"; }).join(", ");
+  const reflectionEvents = [];
+
+  if (affectedStudentIds.length) {
+    await ensureReflectionSchema(env);
+    const studentPlaceholders = affectedStudentIds.map(function () { return "?"; }).join(", ");
+    const [reflectionResult, countResult] = await Promise.all([
+      env.ECO_DB.prepare("SELECT f.*, s.class_number, s.student_number, s.student_name, s.group_number FROM reflections f JOIN students s ON s.id = f.student_id WHERE f.student_id IN (" + studentPlaceholders + ")").bind(...affectedStudentIds).all(),
+      env.ECO_DB.prepare("SELECT student_id, COUNT(*) AS count FROM field_guides WHERE observation_id <> ? AND status = '완료' AND student_id IN (" + studentPlaceholders + ") GROUP BY student_id").bind(id, ...affectedStudentIds).all()
+    ]);
+    const counts = new Map(countResult.results.map(function (row) { return [row.student_id, Number(row.count)]; }));
+    reflectionResult.results.forEach(function (row) {
+      reflectionEvents.push(makeSyncEvent("reflection.upsert", row.student_id, {
+        ...row,
+        guide_count: counts.get(row.student_id) || 0
+      }));
+    });
+  }
+
+  // The deployed Sheets receiver already supports this row-cleanup event.
+  const cleanup = makeSyncEvent("test.cleanup", id, {
+    student_ids: [], observation_ids: [id], guide_ids: guideIds,
+    affected_student_ids: affectedStudentIds
+  });
+  const statements = [
+    env.ECO_DB.prepare("DELETE FROM reviews WHERE target_id IN (" + targetPlaceholders + ")").bind(...targetIds),
+    env.ECO_DB.prepare("DELETE FROM sheet_sync_queue WHERE target_id IN (" + targetPlaceholders + ")").bind(...targetIds)
+  ];
+  if (reflectionEvents.length) {
+    const studentPlaceholders = affectedStudentIds.map(function () { return "?"; }).join(", ");
+    statements.push(env.ECO_DB.prepare("DELETE FROM sheet_sync_queue WHERE event_type = 'reflection.upsert' AND status != 'synced' AND target_id IN (" + studentPlaceholders + ")").bind(...affectedStudentIds));
+  }
+  statements.push(env.ECO_DB.prepare("DELETE FROM field_guides WHERE observation_id = ?").bind(id));
+  statements.push(env.ECO_DB.prepare("DELETE FROM observations WHERE id = ?").bind(id));
+  statements.push(syncStatement(env.ECO_DB, cleanup));
+  reflectionEvents.forEach(function (event) { statements.push(syncStatement(env.ECO_DB, event)); });
+  await env.ECO_DB.batch(statements);
+
+  const photoResults = await Promise.allSettled([
+    env.ECO_PHOTOS.delete(observation.photo_key),
+    env.ECO_PHOTOS.delete(observation.photo_key + ".thumb.webp")
+  ]);
+  const photoCleanupComplete = photoResults.every(function (result) { return result.status === "fulfilled"; });
+  if (!photoCleanupComplete) console.error("eco-photo-cleanup", id);
+  context.waitUntil(syncSheetEvent(env, cleanup));
+  reflectionEvents.forEach(function (event) { context.waitUntil(syncSheetEvent(env, event)); });
+  return json({ ok: true, deleted: { observations: 1, guides: guideIds.length }, sheet_sync_queued: true, photo_cleanup_complete: photoCleanupComplete });
 }
 
 async function ensureReflectionSchema(env) {
