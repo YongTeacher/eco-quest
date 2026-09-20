@@ -438,6 +438,7 @@
     document.getElementById("map-inspector").innerHTML =
       '<div class="inspector-content">' +
         '<img class="observation-photo" src="' + escapeHtml(observation.photo_url) + '" alt="' + escapeHtml(observation.species_name) + ' 대표 사진" />' +
+        '<button class="secondary-button photo-view-button" type="button" data-view-photo="' + escapeHtml(observation.photo_url) + '" data-photo-name="' + escapeHtml(observation.species_name) + '">⤢ 사진 크게 보기</button>' +
         '<span class="pixel-label">' + escapeHtml(categoryLabel(observation.category)) + '</span>' +
         '<h3>' + escapeHtml(observation.species_name) + '</h3>' +
         '<p><i>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</i></p>' +
@@ -722,7 +723,7 @@
     detail.className = "field-guide-infographic card-" + escapeHtml(guide.category || "etc");
     detail.innerHTML =
       '<header class="field-guide-card-head"><div><span class="pixel-label">생태월드 FIELD CARD</span><h2 id="guide-card-title">' + escapeHtml(guide.species_name) + '</h2><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p></div><div class="field-guide-number"><small>ARCHIVE</small><b>NO. ' + String(index + 1).padStart(3, "0") + '</b></div></header>' +
-      '<div class="field-guide-hero"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + ' 대표 사진" /><span>' + escapeHtml(categoryLabel(guide.category)) + ' · ' + escapeHtml(placeName) + '</span></div>' +
+      '<div class="field-guide-hero"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + ' 대표 사진" /><span>' + escapeHtml(categoryLabel(guide.category)) + ' · ' + escapeHtml(placeName) + '</span><button class="photo-view-button" type="button" data-view-photo="' + escapeHtml(guide.photo_url) + '" data-photo-name="' + escapeHtml(guide.species_name) + '">⤢ 사진 크게 보기</button></div>' +
       '<section class="field-guide-location"><div class="field-guide-location-head"><div><h3>DISCOVERY MAP · 발견 위치</h3><p>⌖ ' + escapeHtml(placeName) + '</p></div>' + (kakaoMapUrl ? '<a href="' + escapeHtml(kakaoMapUrl) + '" target="_blank" rel="noopener noreferrer">카카오맵에서 크게 보기 ↗</a>' : '') + '</div><div class="field-guide-location-map-wrap"><div id="guide-location-map" class="field-guide-location-map" aria-label="' + escapeHtml(placeName) + ' 발견 위치 지도"></div><div id="guide-location-map-loading" class="field-guide-location-map-loading">발견 위치 지도를 불러오는 중입니다…</div></div></section>' +
       '<div class="field-guide-facts">' +
         '<section class="field-guide-fact"><h3>HABITAT · 서식지</h3><p>' + escapeHtml(guide.habitat || "서식지 미기록") + '</p></section>' +
@@ -978,11 +979,37 @@
   });
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Escape") return;
-    if (!document.getElementById("login-qr-modal").hidden) closeLoginQr();
+    if (!document.getElementById("photo-viewer-modal").hidden) closePhotoViewer();
+    else if (!document.getElementById("login-qr-modal").hidden) closeLoginQr();
     else if (!document.getElementById("guide-card-modal").hidden) closeGuideCard();
     else if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
     else if (!document.getElementById("observation-edit-modal").hidden) closeObservationEditor();
+  });
+  var photoViewerPreviousFocus = null;
+  function closePhotoViewer() {
+    document.getElementById("photo-viewer-modal").hidden = true;
+    document.getElementById("photo-viewer-image").removeAttribute("src");
+    if (!Array.from(document.querySelectorAll(".location-picker-modal")).some(function (modal) { return !modal.hidden; })) {
+      document.body.classList.remove("modal-open");
+    }
+    if (photoViewerPreviousFocus && photoViewerPreviousFocus.isConnected) photoViewerPreviousFocus.focus();
+    photoViewerPreviousFocus = null;
+  }
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-view-photo]");
+    if (!button) return;
+    photoViewerPreviousFocus = button;
+    document.getElementById("photo-viewer-image").src = button.dataset.viewPhoto;
+    document.getElementById("photo-viewer-image").alt = (button.dataset.photoName || "생물") + " 전체 사진";
+    document.getElementById("photo-viewer-title").textContent = (button.dataset.photoName || "생물") + " 사진";
+    document.getElementById("photo-viewer-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("close-photo-viewer").focus();
+  });
+  document.getElementById("close-photo-viewer").addEventListener("click", closePhotoViewer);
+  document.getElementById("photo-viewer-modal").addEventListener("click", function (event) {
+    if (event.target === this) closePhotoViewer();
   });
   document.getElementById("specific-location-name").addEventListener("input", updatePickerConfirmation);
 

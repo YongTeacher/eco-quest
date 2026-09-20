@@ -508,6 +508,13 @@
     </section>
   </div>
 
+  <div id="photo-viewer-modal" class="photo-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="photo-viewer-title" hidden>
+    <div class="photo-viewer-content">
+      <div class="photo-viewer-header"><h2 id="photo-viewer-title">생물 사진</h2><button id="close-photo-viewer" class="modal-close" type="button" aria-label="확대 사진 닫기">×</button></div>
+      <img id="photo-viewer-image" alt="생물 전체 사진" />
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=78b9d58b34b7b43d0d4edebe6efa2ac4&libraries=clusterer&autoload=false"></script>
   <script src="./vendor/xlsx.full.min.js"></script>
