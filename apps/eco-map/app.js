@@ -40,6 +40,7 @@
   var pickerTarget = "discover";
   var adminObservations = [];
   var adminGuides = [];
+  var adminTrash = [];
   var adminReflections = [];
   var adminMap;
   var adminMapClusterer;
@@ -158,6 +159,7 @@
       dashboard: ["전체 수업 현황", "1반부터 9반까지의 생태 탐사 진행 상황입니다."],
       map: ["전체 생태지도", "학생들이 발견한 생물의 위치를 통합 또는 학급별로 확인합니다."],
       observations: ["모둠 관찰 기록", "학생들이 공동으로 등록한 발견 사진과 동정 기록을 확인합니다."],
+      trash: ["관찰 기록 휴지통", "삭제한 기록은 30일 안에 복구할 수 있습니다."],
       guides: ["개인 생물도감", "학생 개인별로 완성한 생물도감과 조사 내용을 확인합니다."],
       reflections: ["학생 소감문", "개인별 탐사 성찰 내용과 최종 제출 상태를 확인합니다."],
       roster: ["학생·모둠 관리", "등록된 학생을 확인하고 모둠 번호를 직접 배정할 수 있습니다."],
@@ -175,6 +177,7 @@
     if (selected === "roster") loadRoster();
     if (selected === "map") loadAdminObservations(true);
     if (selected === "observations") loadAdminObservations(false);
+    if (selected === "trash") loadAdminTrash();
     if (selected === "guides") loadAdminGuides();
     if (selected === "reflections") loadAdminReflections();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2040,7 +2043,24 @@
       '<button class="photo-view-button" type="button" data-view-photo="' + escapeHtml(item.photo_url) + '" data-photo-name="' + escapeHtml(item.species_name) + '">⤢ 사진 크게 보기</button>' +
       '<div class="admin-detail-tags"><span>' + escapeHtml(categoryLabel(item.category)) + '</span><span>' + escapeHtml(item.identification_status || "학생 동정") + '</span><span>' + escapeHtml(item.review_status || "정상") + '</span></div>' +
       '<dl><dt>학명</dt><dd><i>' + escapeHtml(item.scientific_name || "미기록") + '</i></dd><dt>발견 장소</dt><dd>' + escapeHtml(item.place_name) + ' <a href="' + escapeHtml(mapUrl) + '" target="_blank" rel="noopener noreferrer">지도에서 보기 ↗</a></dd><dt>관찰 특징</dt><dd>' + escapeHtml(item.features || "미기록") + '</dd><dt>동정 근거</dt><dd>' + escapeHtml(item.identification_reason || "미기록") + '</dd><dt>참고 자료</dt><dd>' + escapeHtml(item.source || "미기록") + '</dd><dt>등록일</dt><dd>' + escapeHtml(formatDate(item.created_at)) + '</dd></dl>' +
-      '<div class="admin-record-delete"><p>삭제하면 이 발견 기록과 연결된 개인 생물도감도 함께 삭제됩니다. 복구할 수 없으니 신중히 확인해 주세요.</p><button type="button" data-admin-delete-observation="' + escapeHtml(item.id) + '">이 관찰 기록 삭제</button></div>');
+      '<div class="admin-record-delete"><p>삭제하면 지도와 학생 도감에서 숨겨지고 휴지통에 30일 보관됩니다. 연결된 개인 도감도 함께 숨겨지며, 기간 안에는 복구할 수 있습니다.</p><button type="button" data-admin-delete-observation="' + escapeHtml(item.id) + '">휴지통으로 이동</button></div>');
+  }
+
+  function loadAdminTrash() {
+    api("admin/trash").then(function (result) {
+      adminTrash = result.records || [];
+      renderAdminTrash();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function renderAdminTrash() {
+    document.getElementById("admin-trash-count").textContent = "총 " + adminTrash.length + "건";
+    document.getElementById("admin-trash-list").innerHTML = adminTrash.length ? adminTrash.map(function (item) {
+      return '<article class="admin-trash-card"><div><span class="pixel-label">' + escapeHtml(item.class_number) + '반 · ' + escapeHtml(item.student_name) + '</span><h3>' + escapeHtml(item.species_name) + '</h3><p>연결된 개인 도감 ' + escapeHtml(item.guide_count) + '개</p></div><div class="admin-trash-actions"><span>삭제일 ' + escapeHtml(formatDate(item.deleted_at)) + '<br />영구 삭제 예정 ' + escapeHtml(formatDate(item.purge_after)) + '</span><button type="button" data-restore-observation="' + escapeHtml(item.id) + '">기록 복구</button></div></article>';
+    }).join("") : '<p class="empty-message">휴지통이 비어 있습니다.</p>';
   }
 
   function loadAdminGuides() {
@@ -2144,19 +2164,36 @@
     var observationCard = event.target.closest("[data-admin-observation]");
     var guideCard = event.target.closest("[data-admin-guide]");
     var reflectionButton = event.target.closest("[data-admin-reflection]");
+    var restoreButton = event.target.closest("[data-restore-observation]");
     if (observationCard && adminObservations[Number(observationCard.dataset.adminObservation)]) openAdminObservation(adminObservations[Number(observationCard.dataset.adminObservation)]);
     if (guideCard && adminGuides[Number(guideCard.dataset.adminGuide)]) openAdminGuide(adminGuides[Number(guideCard.dataset.adminGuide)]);
     if (reflectionButton && adminReflections[Number(reflectionButton.dataset.adminReflection)]) openAdminReflection(adminReflections[Number(reflectionButton.dataset.adminReflection)]);
+    if (restoreButton && !restoreButton.disabled) {
+      restoreButton.disabled = true;
+      restoreButton.textContent = "복구하는 중…";
+      api("admin/trash/" + encodeURIComponent(restoreButton.dataset.restoreObservation) + "/restore", { method: "POST" }).then(function (result) {
+        adminTrash = adminTrash.filter(function (item) { return item.id !== restoreButton.dataset.restoreObservation; });
+        renderAdminTrash();
+        loadAdminOverview();
+        showToast("관찰 기록과 개인 도감 " + result.restored.guides + "개를 복구했습니다.");
+      }).catch(function (error) {
+        if (error.status === 401) showLogin();
+        showToast(error.message);
+      }).finally(function () {
+        restoreButton.disabled = false;
+        restoreButton.textContent = "기록 복구";
+      });
+    }
   });
   document.getElementById("admin-record-detail").addEventListener("click", function (event) {
     var button = event.target.closest("[data-admin-delete-observation]");
     if (!button || button.disabled) return;
     var item = adminObservations.find(function (record) { return record.id === button.dataset.adminDeleteObservation; });
     if (!item) return;
-    var warning = item.class_number + "반 " + item.student_name + " 학생의 ‘" + item.species_name + "’ 관찰 기록을 삭제할까요?\n\n연결된 개인 생물도감과 사진, 구글 시트의 해당 기록도 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.";
+    var warning = item.class_number + "반 " + item.student_name + " 학생의 ‘" + item.species_name + "’ 관찰 기록을 휴지통으로 옮길까요?\n\n지도와 학생 도감, 구글 시트에서 숨겨집니다. 30일 안에는 교사 휴지통에서 복구할 수 있습니다.";
     if (!window.confirm(warning)) return;
     button.disabled = true;
-    button.textContent = "삭제하는 중…";
+    button.textContent = "휴지통으로 옮기는 중…";
     api("admin/observations/" + encodeURIComponent(item.id), { method: "DELETE" }).then(function (result) {
       document.getElementById("close-admin-record").click();
       adminObservations = adminObservations.filter(function (record) { return record.id !== item.id; });
@@ -2165,13 +2202,13 @@
       renderAdminMap();
       renderAdminGuides();
       loadAdminOverview();
-      showToast("관찰 기록과 연결된 도감 " + result.deleted.guides + "개를 삭제했습니다." + (result.photo_cleanup_complete ? "" : " 사진 파일 정리는 관리자 확인이 필요합니다."));
+      showToast("관찰 기록과 연결된 도감 " + result.trashed.guides + "개를 휴지통으로 옮겼습니다. 30일 안에 복구할 수 있습니다.");
     }).catch(function (error) {
       if (error.status === 401) showLogin();
       showToast(error.message);
     }).finally(function () {
       button.disabled = false;
-      button.textContent = "이 관찰 기록 삭제";
+      button.textContent = "휴지통으로 이동";
     });
   });
   document.getElementById("close-admin-record").addEventListener("click", function () {

@@ -23,7 +23,7 @@ Google Sheets는 교사가 한눈에 확인하는 운영용 사본이며, 시트
 1. D1 데이터베이스와 비공개 R2 버킷을 생성합니다.
 2. Pages 프로젝트에 `ECO_DB`, `ECO_PHOTOS` 바인딩을 연결합니다.
 3. 위의 다섯 비밀 변수를 Preview와 Production에 등록합니다.
-4. `migrations/0001_eco_quest.sql`부터 `migrations/0003_optional_roster_group.sql`까지 D1에 적용합니다.
+4. `migrations/0001_eco_quest.sql`부터 `migrations/0003_optional_roster_group.sql`까지 D1에 적용합니다. `0004_observation_trash.sql`은 휴지통을 처음 사용할 때 서버가 자동 적용합니다.
 5. `/api/eco/health`의 `ready`가 `true`인지 확인합니다.
 6. 학생 로그인·관찰 등록·사진 조회·시트 반영을 순서대로 검증합니다.
 
@@ -36,6 +36,10 @@ Google Sheets는 교사가 한눈에 확인하는 운영용 사본이며, 시트
 - 이후 같은 반·번호는 최초 등록한 PIN으로만 로그인할 수 있습니다.
 - 교사 기능은 별도의 관리자 비밀번호로 보호합니다.
 - 최종 등록 시 대표 사진 한 장만 서버로 전송하며 나머지 후보 사진은 브라우저에서 폐기합니다.
+
+## 관찰 기록 휴지통
+
+교사가 관찰 기록을 삭제하면 원본 사진·연결된 도감·검토 기록은 D1 휴지통에 30일간 보관되고 일반 지도·도감·Google Sheets에서는 제거됩니다. 교사 `휴지통` 탭에서 기간 내 복구할 수 있습니다. 복구하면 연결된 도감과 검토 기록도 다시 등록하고 시트 동기화 대기열에 넣습니다. `wrangler.jsonc`의 매시간 Cron Trigger가 만료된 휴지통 항목과 비공개 R2 사진을 영구 삭제합니다. Cron 실행은 UTC 기준이며, 만료 직후 다음 실행 시점에 정리됩니다.
 
 ## 학생 명단 CSV
 

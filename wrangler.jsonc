@@ -3,6 +3,9 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-13",
   "keep_vars": true,
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
   "assets": {
     "directory": "./apps/eco-map",
     "binding": "ASSETS",

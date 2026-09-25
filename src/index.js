@@ -1,4 +1,4 @@
-import { onRequest as handleEcoApi } from "../functions/api/eco/[[path]].js";
+import { onRequest as handleEcoApi, purgeExpiredTrash } from "../functions/api/eco/[[path]].js";
 
 export default {
   async fetch(request, env, context) {
@@ -13,5 +13,8 @@ export default {
       });
     }
     return env.ASSETS.fetch(request);
+  },
+  async scheduled(_controller, env, context) {
+    context.waitUntil(purgeExpiredTrash(env));
   }
 };
