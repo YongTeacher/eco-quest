@@ -3,10 +3,15 @@ const SESSION_SECONDS = 60 * 60 * 10;
 const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 const THUMBNAIL_MAX_BYTES = 150 * 1024;
 const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+const AI_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+const AI_DAILY_LIMIT = 100;
+const AI_STUDENT_DAILY_LIMIT = 3;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
 let trashSchemaPromise;
+let aiIdentificationSchemaPromise;
 const PHOTO_TYPES = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -42,6 +47,7 @@ async function route(context) {
   const user = await requireUser(context);
   if (method === "GET" && path === "me") return json({ ok: true, user: publicUser(user) });
   if (method === "GET" && path === "observations") return listObservations(context, user);
+  if (method === "POST" && path === "identify") return identifyOrganism(context, user);
   if (method === "POST" && path === "observations") return createObservation(context, user);
   const observationEditMatch = path.match(/^observations\/([0-9a-f-]{36})$/i);
   if (method === "PATCH" && observationEditMatch) return updateObservation(context, user, observationEditMatch[1]);
@@ -80,6 +86,7 @@ function health(env) {
   const bindings = {
     database: Boolean(env.ECO_DB),
     photos: Boolean(env.ECO_PHOTOS),
+    ai: Boolean(env.AI),
     classCode: Boolean(env.ECO_CLASS_CODE),
     authPepper: Boolean(env.ECO_AUTH_PEPPER),
     adminPassword: Boolean(env.ECO_ADMIN_PASSWORD),
@@ -215,6 +222,220 @@ async function listObservations({ request, env }, user) {
   ).bind(...values).all();
   const origin = new URL(request.url).origin;
   return json({ ok: true, observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id + "?v=" + encodeURIComponent(row.updated_at) }; }), viewer: user.role });
+}
+
+async function identifyOrganism({ request, env }, user) {
+  if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  requireBindings(env, ["ECO_DB", "AI"]);
+  await ensureAiIdentificationSchema(env);
+  await env.ECO_DB.prepare("DELETE FROM ai_identification_requests WHERE status = 'pending' AND updated_at < ?")
+    .bind(new Date(Date.now() - 10 * 60 * 1000).toISOString()).run();
+
+  const form = await request.formData();
+  const photo = form.get("photo");
+  const category = String(form.get("category") || "");
+  const features = text(form.get("features"), 2, 1000, "관찰 특징");
+  if (!(photo instanceof File) || !photo.size) return json({ ok: false, error: "분석할 대표 사진을 선택해 주세요." }, 400);
+  if (photo.size > AI_PHOTO_MAX_BYTES) return json({ ok: false, error: "AI 분석용 사진은 2MB 이하여야 합니다." }, 413);
+  if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(photo.type)) {
+    return json({ ok: false, error: "AI 분석은 JPG, PNG 또는 WEBP 사진을 사용해 주세요." }, 400);
+  }
+  if (!CATEGORIES.has(category)) return json({ ok: false, error: "생물 분류를 선택해 주세요." }, 400);
+
+  const bytes = new Uint8Array(await photo.arrayBuffer());
+  const requestHash = await sha256Bytes(joinBytes(bytes, new TextEncoder().encode("\n" + category + "\n" + features.toLowerCase())));
+  const cached = await env.ECO_DB.prepare(
+    "SELECT result_json FROM ai_identification_requests WHERE student_id = ? AND request_hash = ? AND status = 'completed'"
+  ).bind(user.id, requestHash).first();
+  if (cached && cached.result_json) {
+    const usage = await aiUsage(env.ECO_DB, user.id, utcDate());
+    return json({ ok: true, ...JSON.parse(cached.result_json), cached: true, limits: usage });
+  }
+
+  const day = utcDate();
+  const requestId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const reservation = await env.ECO_DB.prepare(
+    "INSERT INTO ai_identification_requests (id, student_id, usage_date, request_hash, status, result_json, created_at, updated_at) " +
+    "SELECT ?, ?, ?, ?, 'pending', '', ?, ? " +
+    "WHERE (SELECT COUNT(*) FROM ai_identification_requests WHERE usage_date = ? AND status != 'failed') < ? " +
+    "AND (SELECT COUNT(*) FROM ai_identification_requests WHERE usage_date = ? AND student_id = ? AND status != 'failed') < ? " +
+    "ON CONFLICT(student_id, request_hash) DO NOTHING"
+  ).bind(requestId, user.id, day, requestHash, now, now, day, AI_DAILY_LIMIT, day, user.id, AI_STUDENT_DAILY_LIMIT).run();
+
+  if (!Number(reservation.meta && reservation.meta.changes)) {
+    const usage = await aiUsage(env.ECO_DB, user.id, day);
+    const repeated = await env.ECO_DB.prepare(
+      "SELECT status, result_json FROM ai_identification_requests WHERE student_id = ? AND request_hash = ?"
+    ).bind(user.id, requestHash).first();
+    if (repeated && repeated.status === "completed" && repeated.result_json) {
+      return json({ ok: true, ...JSON.parse(repeated.result_json), cached: true, limits: usage });
+    }
+    if (repeated && repeated.status === "pending") {
+      return json({ ok: false, error: "같은 사진을 이미 분석하고 있습니다. 잠시 후 다시 눌러 주세요." }, 409);
+    }
+    return json({
+      ok: false,
+      error: usage.student_used >= AI_STUDENT_DAILY_LIMIT
+        ? "오늘 사용할 수 있는 개인 AI 분석 3회를 모두 사용했습니다. 직접 동정하기를 이용해 주세요."
+        : "오늘 학교 전체 AI 분석 무료 안전 한도에 도달했습니다. 직접 동정하기를 이용해 주세요.",
+      limits: usage
+    }, 429);
+  }
+
+  try {
+    const dataUrl = "data:" + photo.type + ";base64," + bytesToBase64(bytes);
+    const prompt = organismIdentificationPrompt(category, features);
+    const aiResponse = await env.AI.run(AI_MODEL, {
+      messages: [
+        { role: "system", content: "You are a cautious field biologist identifying organisms photographed on a Korean school campus. Never invent certainty or ignore contradictions." },
+        { role: "user", content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: dataUrl } }
+        ] }
+      ],
+      max_completion_tokens: 700,
+      temperature: 0.1,
+      response_format: { type: "json_object" }
+    }, { rejectIfBusy: true });
+    const parsed = parseAiIdentification(aiResponse);
+    const candidates = await validateTaxa(parsed.candidates);
+    const result = {
+      candidates,
+      uncertain: Boolean(parsed.uncertain) || candidates.length === 0,
+      note: optionalAiText(parsed.note, 240) || (candidates.length ? "사진과 관찰 특징을 함께 비교한 후보입니다." : "사진만으로 신뢰할 만한 후보를 찾지 못했습니다. 직접 동정해 주세요.")
+    };
+    await env.ECO_DB.prepare(
+      "UPDATE ai_identification_requests SET status = 'completed', result_json = ?, updated_at = ? WHERE id = ?"
+    ).bind(JSON.stringify(result), new Date().toISOString(), requestId).run();
+    return json({ ok: true, ...result, cached: false, limits: await aiUsage(env.ECO_DB, user.id, day) });
+  } catch (error) {
+    await env.ECO_DB.prepare("DELETE FROM ai_identification_requests WHERE id = ? AND status = 'pending'").bind(requestId).run();
+    console.error("organism-identification", error);
+    const message = String(error && error.message || error);
+    if (/quota|limit|neurons|capacity|busy|3040|429/i.test(message)) {
+      return json({ ok: false, error: "현재 무료 AI 할당량 또는 처리 용량을 사용할 수 없습니다. 직접 동정하기를 이용해 주세요." }, 429);
+    }
+    return json({ ok: false, error: "사진 분석에 실패했습니다. 잠시 후 다시 시도하거나 직접 동정해 주세요." }, 502);
+  }
+}
+
+function organismIdentificationPrompt(category, features) {
+  const labels = { plant: "식물", insect: "곤충·절지동물", bird: "조류", animal: "그 밖의 동물", water: "수서생물·양서류", fungi: "균류·버섯", etc: "기타 생물" };
+  return [
+    "사진 속 주된 생물을 동정하라. 촬영지는 대한민국 경기도 용인시의 학교 주변이다.",
+    "학생이 선택한 분류: " + labels[category] + " (사진과 명백히 다르면 그 사실을 note에 써라)",
+    "학생이 눈으로 관찰한 특징: " + features,
+    "사진과 관찰 특징이 모두 맞는 후보만 가능성 순으로 최대 3개 제시하라.",
+    "종까지 확신할 수 없으면 속(genus) 또는 과(family) 수준으로 낮추고, 전혀 불명확하면 candidates를 빈 배열로 반환하라.",
+    "나비처럼 사진과 형태가 다른 후보를 억지로 넣지 마라. 한국에서 관찰 가능한 분류군인지 확인하라.",
+    "반드시 JSON만 반환하라: {\"candidates\":[{\"name\":\"한국어 이름\",\"scientific\":\"검증 가능한 라틴 학명 또는 속명\",\"clue\":\"사진과 관찰 특징에 근거한 짧은 구별점\",\"confidence\":\"높음|보통|낮음\"}],\"uncertain\":true,\"note\":\"주의할 점\"}"
+  ].join("\n");
+}
+
+function parseAiIdentification(response) {
+  const raw = response && (response.response || response.result || response.choices?.[0]?.message?.content);
+  if (raw && typeof raw === "object") return sanitizeAiIdentification(raw);
+  const textValue = String(raw || "").trim();
+  const fenced = textValue.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = fenced.indexOf("{");
+  const end = fenced.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("AI response did not contain JSON");
+  return sanitizeAiIdentification(JSON.parse(fenced.slice(start, end + 1)));
+}
+
+function sanitizeAiIdentification(value) {
+  const candidates = Array.isArray(value && value.candidates) ? value.candidates.slice(0, 3).map(function (item) {
+    const confidence = ["높음", "보통", "낮음"].includes(String(item && item.confidence)) ? String(item.confidence) : "낮음";
+    return {
+      name: optionalAiText(item && item.name, 80),
+      scientific: optionalAiText(item && item.scientific, 120),
+      clue: optionalAiText(item && item.clue, 240),
+      confidence
+    };
+  }).filter(function (item) {
+    return item.name && /^[A-Z][A-Za-z.-]+(?:\s+[a-z][A-Za-z.-]+|\s+sp\.)?$/.test(item.scientific);
+  }) : [];
+  return { candidates, uncertain: Boolean(value && value.uncertain), note: optionalAiText(value && value.note, 240) };
+}
+
+function optionalAiText(value, max) {
+  return String(value || "").replace(/[<>]/g, "").trim().slice(0, max);
+}
+
+async function validateTaxa(candidates) {
+  const checked = await Promise.all(candidates.map(async function (candidate) {
+    try {
+      const query = candidate.scientific.replace(/\s+sp\.$/, "");
+      const response = await fetch("https://api.inaturalist.org/v1/taxa?q=" + encodeURIComponent(query) + "&locale=ko&per_page=10", {
+        headers: { Accept: "application/json", "User-Agent": "EcoQuest-School/1.0" }
+      });
+      if (!response.ok) return null;
+      const body = await response.json();
+      const taxon = (body.results || []).find(function (item) { return String(item.name || "").toLowerCase() === query.toLowerCase(); });
+      if (!taxon) return null;
+      return {
+        ...candidate,
+        name: taxon.preferred_common_name || candidate.name || query,
+        scientific: taxon.name,
+        icon: "🔎"
+      };
+    } catch (_error) {
+      return null;
+    }
+  }));
+  return checked.filter(Boolean);
+}
+
+async function aiUsage(db, studentId, day) {
+  const [globalRow, studentRow] = await Promise.all([
+    db.prepare("SELECT COUNT(*) AS count FROM ai_identification_requests WHERE usage_date = ? AND status != 'failed'").bind(day).first(),
+    db.prepare("SELECT COUNT(*) AS count FROM ai_identification_requests WHERE usage_date = ? AND student_id = ? AND status != 'failed'").bind(day, studentId).first()
+  ]);
+  return {
+    daily_limit: AI_DAILY_LIMIT,
+    daily_used: Number(globalRow && globalRow.count || 0),
+    student_limit: AI_STUDENT_DAILY_LIMIT,
+    student_used: Number(studentRow && studentRow.count || 0),
+    resets_at: new Date(Date.parse(day + "T00:00:00.000Z") + 24 * 60 * 60 * 1000).toISOString()
+  };
+}
+
+function utcDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function joinBytes(left, right) {
+  const joined = new Uint8Array(left.length + right.length);
+  joined.set(left);
+  joined.set(right, left.length);
+  return joined;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+async function sha256Bytes(bytes) {
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+}
+
+async function ensureAiIdentificationSchema(env) {
+  if (!aiIdentificationSchemaPromise) {
+    aiIdentificationSchemaPromise = env.ECO_DB.batch([
+      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS ai_identification_requests (id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE, usage_date TEXT NOT NULL, request_hash TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')), result_json TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(student_id, request_hash))"),
+      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_ai_identification_daily ON ai_identification_requests(usage_date, status)"),
+      env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_ai_identification_student_daily ON ai_identification_requests(student_id, usage_date, status)")
+    ]).catch(function (error) {
+      aiIdentificationSchemaPromise = null;
+      throw error;
+    });
+  }
+  return aiIdentificationSchemaPromise;
 }
 
 async function createObservation(context, user) {

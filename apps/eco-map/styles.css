@@ -266,6 +266,8 @@ a { color: inherit; text-decoration: none; }
 .analyze-button { width: 100%; margin-top: 18px; }
 .candidate-panel, .research-panel { grid-column: 1 / -1; }
 .candidate-list { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 14px; }
+.candidate-empty { grid-column: 1 / -1; display: grid; gap: 6px; padding: 22px; border: 1px dashed #aab8a3; border-radius: 15px; color: var(--muted); background: #f7f9f1; text-align: center; }
+.candidate-empty b { color: var(--forest-800); font-size: 15px; }
 .candidate-card { position: relative; overflow: hidden; padding: 19px; border: 1px solid var(--line); border-radius: 15px; background: var(--white); cursor: pointer; text-align: left; transition: .16s; }
 .candidate-card:hover, .candidate-card.selected { transform: translateY(-2px); border-color: var(--forest-700); box-shadow: 4px 4px 0 var(--leaf-200); }.candidate-card .rank { position: absolute; right: 12px; top: 12px; color: #95a097; font: 800 12px var(--pixel); }.candidate-card .candidate-icon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 13px; border-radius: 11px; background: #edf2df; font-size: 24px; }.candidate-card h4 { font-size: 16px; }.candidate-card > p { margin: 2px 0 12px; color: var(--muted); font: italic 13px var(--pixel); }.candidate-card small { display: block; color: var(--muted); font-size: 13px; }.confidence { display: inline-flex; margin-top: 10px; padding: 4px 7px; border-radius: 99px; color: #296144; background: #e3f0d6; font-size: 12px; font-weight: 800; }
 .candidate-photo { height: 150px; position: relative; display: grid; place-items: center; overflow: hidden; margin: -19px -19px 15px; background: linear-gradient(145deg,#edf3df,#d3e4ca); }

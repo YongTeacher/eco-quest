@@ -28,6 +28,9 @@
       "bucket_name": "eco-quest-photos"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "secrets": {
     "required": [
       "ECO_CLASS_CODE",

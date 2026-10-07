@@ -42,6 +42,8 @@ Cloudflare Secret 값, 관리자 비밀번호, 학생 PIN, 학생 명단 원본 
 - 1~9반 및 통합 생태지도
 - 모둠 공동 관찰과 대표 사진 등록
 - 생물 후보 사진 및 학생 최종 동정
+- Workers AI 사진·관찰 특징 기반 생물 후보 분석 및 iNaturalist 학명 검증
+- AI 무료 안전 제한(학교 전체 하루 100회, 학생당 하루 3회)과 동일 요청 결과 재사용
 - 개인 생물도감 3개, 교사 승인 시 5개
 - 나이스 XLSX/XLS/CSV 학생 명단 일괄 등록
 - 교사 관리자 학생·모둠 배정
@@ -81,3 +83,4 @@ Cloudflare Secret 값, 관리자 비밀번호, 학생 PIN, 학생 명단 원본 
 - Cloudflare Secret 값을 코드, 로그, 문서에 기록하지 않습니다.
 - 변경 후 JavaScript 문법 검사, `git diff --check`, Wrangler dry-run을 수행합니다.
 - 푸시 후 운영 주소에서 최신 파일 반영 여부를 확인합니다.
+- AI 분석은 `wrangler.jsonc`의 `AI` 바인딩을 사용하며, 한도 도달 또는 분석 실패 시 학생이 직접 동정할 수 있습니다.

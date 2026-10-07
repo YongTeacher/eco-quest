@@ -70,44 +70,6 @@
     });
   }
 
-  var candidateData = {
-    plant: [
-      { name: "서양민들레", scientific: "Taraxacum officinale", clue: "바깥쪽 총포 조각이 아래로 젖혀짐", confidence: "가능성 높음", icon: "✿" },
-      { name: "민들레", scientific: "Taraxacum platycarpum", clue: "총포 조각이 곧게 붙고 꽃이 선명한 노란색", confidence: "비교 필요", icon: "✿" },
-      { name: "씀바귀", scientific: "Ixeridium dentatum", clue: "줄기가 갈라지고 꽃잎 수가 비교적 적음", confidence: "가능성 낮음", icon: "♧" }
-    ],
-    insect: [
-      { name: "배추흰나비", scientific: "Pieris rapae", clue: "흰 날개와 앞날개의 검은 점", confidence: "가능성 높음", icon: "◆" },
-      { name: "대만흰나비", scientific: "Pieris canidia", clue: "날개 시맥을 따라 검은 무늬가 발달", confidence: "비교 필요", icon: "◇" },
-      { name: "큰줄흰나비", scientific: "Pieris melete", clue: "날개 뒷면의 시맥 무늬가 뚜렷함", confidence: "가능성 낮음", icon: "◆" }
-    ],
-    bird: [
-      { name: "직박구리", scientific: "Hypsipetes amaurotis", clue: "회갈색 몸과 뾰족한 머리깃", confidence: "가능성 높음", icon: "⌁" },
-      { name: "참새", scientific: "Passer montanus", clue: "갈색 머리와 흰 뺨의 검은 점", confidence: "비교 필요", icon: "⌁" },
-      { name: "찌르레기", scientific: "Spodiopsar cineraceus", clue: "회색 몸과 주황색 부리", confidence: "가능성 낮음", icon: "⌁" }
-    ],
-    animal: [
-      { name: "청설모", scientific: "Sciurus vulgaris", clue: "붉은빛 털과 길고 풍성한 꼬리", confidence: "가능성 높음", icon: "♞" },
-      { name: "다람쥐", scientific: "Eutamias sibiricus", clue: "등에 다섯 개의 검은 줄무늬", confidence: "비교 필요", icon: "♞" },
-      { name: "족제비", scientific: "Mustela sibirica", clue: "길쭉한 몸과 짧은 다리", confidence: "가능성 낮음", icon: "♞" }
-    ],
-    water: [
-      { name: "참개구리", scientific: "Pelophylax nigromaculatus", clue: "등의 검은 반점과 뚜렷한 등주름", confidence: "가능성 높음", icon: "●" },
-      { name: "금개구리", scientific: "Pelophylax chosenicus", clue: "등 양쪽의 금색 융기선", confidence: "확인 필요", icon: "●" },
-      { name: "청개구리", scientific: "Dryophytes japonicus", clue: "작은 몸과 발가락 끝 흡반", confidence: "가능성 낮음", icon: "●" }
-    ],
-    fungi: [
-      { name: "구름버섯", scientific: "Trametes versicolor", clue: "부채꼴 갓에 여러 색의 둥근 무늬", confidence: "가능성 높음", icon: "♠" },
-      { name: "치마버섯", scientific: "Schizophyllum commune", clue: "회백색 부채꼴 갓과 갈라진 주름", confidence: "비교 필요", icon: "♠" },
-      { name: "말불버섯", scientific: "Lycoperdon perlatum", clue: "둥근 자실체 표면의 작은 돌기", confidence: "가능성 낮음", icon: "♠" }
-    ],
-    etc: [
-      { name: "미확인 생물 A", scientific: "Taxon incertae sedis", clue: "사진과 관찰 특징을 추가로 비교하세요", confidence: "추가 조사", icon: "?" },
-      { name: "미확인 생물 B", scientific: "Unidentified organism", clue: "다른 각도의 사진이 필요합니다", confidence: "추가 조사", icon: "?" },
-      { name: "직접 동정하기", scientific: "Manual identification", clue: "도감이나 생물 데이터베이스에서 검색하세요", confidence: "학생 조사", icon: "⌕" }
-    ]
-  };
-
   function showToast(message) {
     window.clearTimeout(toastTimer);
     toast.textContent = message;
@@ -1276,7 +1238,32 @@
     }
   });
 
-  /* Mock AI analysis */
+  function makeAiAnalysisPhoto(file) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      image.addEventListener("load", function () {
+        URL.revokeObjectURL(objectUrl);
+        var scale = Math.min(1, 1024 / Math.max(image.naturalWidth, image.naturalHeight));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          if (!blob) return reject(new Error("AI 분석용 사진을 준비하지 못했습니다."));
+          resolve(new File([blob], "eco-ai-photo.jpg", { type: "image/jpeg", lastModified: Date.now() }));
+        }, "image/jpeg", 0.8);
+      });
+      image.addEventListener("error", function () {
+        URL.revokeObjectURL(objectUrl);
+        if (/^image\/(jpeg|png|webp)$/.test(file.type) && file.size <= 2 * 1024 * 1024) resolve(file);
+        else reject(new Error("이 사진 형식은 AI 분석용으로 변환할 수 없습니다. JPG 사진을 사용해 주세요."));
+      });
+      image.src = objectUrl;
+    });
+  }
+
+  /* Workers AI photo identification */
   document.getElementById("analyze-button").addEventListener("click", function () {
     var category = document.getElementById("category-select").value;
     var features = document.getElementById("feature-input").value.trim();
@@ -1295,20 +1282,38 @@
     var button = this;
     button.disabled = true;
     button.innerHTML = "사진과 특징을 비교하는 중…";
-    window.setTimeout(function () {
-      renderCandidates(candidateData[category] || candidateData.etc);
+    makeAiAnalysisPhoto(photos[0].file).then(function (analysisPhoto) {
+      var form = new FormData();
+      form.append("photo", analysisPhoto, analysisPhoto.name);
+      form.append("category", category);
+      form.append("features", features);
+      return api("identify", { method: "POST", body: form });
+    }).then(function (result) {
+      renderCandidates(result.candidates || []);
       document.getElementById("candidate-section").hidden = false;
+      var remaining = result.limits ? Math.max(0, Number(result.limits.student_limit) - Number(result.limits.student_used)) : null;
+      showToast(result.note + (remaining === null ? "" : " · 오늘 개인 분석 " + remaining + "회 남음"));
+      document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
+    }).catch(function (error) {
+      showToast(error.message);
+      document.getElementById("candidate-section").hidden = false;
+      renderCandidates([]);
+      document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
+    }).finally(function () {
       button.disabled = false;
       button.innerHTML = "다시 분석하기 <span>✦</span>";
-      document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 850);
+    });
   });
 
   function renderCandidates(items) {
+    if (!items.length) {
+      document.getElementById("candidate-list").innerHTML = '<div class="candidate-empty"><b>신뢰할 만한 자동 후보를 찾지 못했습니다.</b><span>다른 각도의 사진으로 다시 시도하거나 아래의 직접 동정하기를 이용해 주세요.</span></div>';
+      return;
+    }
     document.getElementById("candidate-list").innerHTML = items.map(function (item, index) {
       return '<article class="candidate-card" tabindex="0" role="button" data-candidate-index="' + index + '" data-name="' + escapeHtml(item.name) + '" data-scientific="' + escapeHtml(item.scientific) + '">' +
         '<span class="rank">0' + (index + 1) + '</span>' +
-        '<div class="candidate-photo"><span class="candidate-photo-placeholder"><b>' + item.icon + '</b><small>대표 사진 검색 중</small></span><img data-candidate-image="' + index + '" alt="' + escapeHtml(item.name) + ' 대표 사진" loading="eager" /></div>' +
+        '<div class="candidate-photo"><span class="candidate-photo-placeholder"><b>' + escapeHtml(item.icon || "🔎") + '</b><small>대표 사진 검색 중</small></span><img data-candidate-image="' + index + '" alt="' + escapeHtml(item.name) + ' 대표 사진" loading="eager" /></div>' +
         '<h4>' + escapeHtml(item.name) + '</h4><p>' + escapeHtml(item.scientific) + '</p><small>' + escapeHtml(item.clue) + '</small><span class="confidence">' + escapeHtml(item.confidence) + '</span>' +
         '<a class="candidate-photo-credit" data-candidate-credit="' + index + '" target="_blank" rel="noopener noreferrer" hidden></a>' +
       '</article>';
