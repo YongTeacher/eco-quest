@@ -248,8 +248,14 @@ async function identifyOrganism({ request, env }, user) {
     "SELECT result_json FROM ai_identification_requests WHERE student_id = ? AND request_hash = ? AND status = 'completed'"
   ).bind(user.id, requestHash).first();
   if (cached && cached.result_json) {
-    const usage = await aiUsage(env.ECO_DB, user.id, utcDate());
-    return json({ ok: true, ...JSON.parse(cached.result_json), cached: true, limits: usage });
+    const cachedResult = JSON.parse(cached.result_json);
+    if (cachedResult.cache_version === 2 || (cachedResult.candidates && cachedResult.candidates.length)) {
+      const usage = await aiUsage(env.ECO_DB, user.id, utcDate());
+      return json({ ok: true, ...cachedResult, cached: true, limits: usage });
+    }
+    await env.ECO_DB.prepare(
+      "DELETE FROM ai_identification_requests WHERE student_id = ? AND request_hash = ? AND status = 'completed'"
+    ).bind(user.id, requestHash).run();
   }
 
   const day = utcDate();
@@ -301,6 +307,7 @@ async function identifyOrganism({ request, env }, user) {
     const parsed = parseAiIdentification(aiResponse);
     const candidates = await validateTaxa(parsed.candidates);
     const result = {
+      cache_version: 2,
       candidates,
       uncertain: Boolean(parsed.uncertain) || candidates.length === 0,
       note: optionalAiText(parsed.note, 240) || (candidates.length ? "사진과 관찰 특징을 함께 비교한 후보입니다." : "사진만으로 신뢰할 만한 후보를 찾지 못했습니다. 직접 동정해 주세요.")
