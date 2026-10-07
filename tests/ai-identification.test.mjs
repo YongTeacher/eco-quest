@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { onRequest } from "../functions/api/eco/[[path]].js";
+import { onRequest, parseAiIdentification } from "../functions/api/eco/[[path]].js";
+
+test("plain-language vision responses recover scientific-name candidates", () => {
+  const result = parseAiIdentification({
+    choices: [{ message: { content: "사진의 낫 모양 앞다리와 긴 앞가슴으로 보아 왕사마귀(Tenodera sinensis)가 가장 유력합니다." } }]
+  });
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].scientific, "Tenodera sinensis");
+  assert.equal(result.uncertain, true);
+});
 
 test("student photos are analyzed by Workers AI and taxonomy candidates are validated", async () => {
   const calls = [];

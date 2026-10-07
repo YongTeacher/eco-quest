@@ -348,12 +348,14 @@ function organismIdentificationPrompt(category, features) {
     "사진과 관찰 특징이 모두 맞는 후보만 가능성 순으로 최대 3개 제시하라.",
     "종까지 확신할 수 없으면 속(genus) 또는 과(family) 수준으로 낮추고, 전혀 불명확하면 candidates를 빈 배열로 반환하라.",
     "나비처럼 사진과 형태가 다른 후보를 억지로 넣지 마라. 한국에서 관찰 가능한 분류군인지 확인하라.",
-    "반드시 JSON만 반환하라: {\"candidates\":[{\"name\":\"한국어 이름\",\"scientific\":\"검증 가능한 라틴 학명 또는 속명\",\"clue\":\"사진과 관찰 특징에 근거한 짧은 구별점\",\"confidence\":\"높음|보통|낮음\"}],\"uncertain\":true,\"note\":\"주의할 점\"}"
+    "반드시 JSON만 반환하라: {\"candidates\":[{\"name\":\"한국어 이름\",\"scientific\":\"검증 가능한 라틴 학명 또는 속명\",\"clue\":\"사진과 관찰 특징에 근거한 짧은 구별점\",\"confidence\":\"높음|보통|낮음\"}],\"uncertain\":true,\"note\":\"주의할 점\"}",
+    "JSON 출력이 불가능하면 설명 없이 후보마다 CANDIDATE|한국어 이름|라틴 학명|구별점|높음 또는 보통 또는 낮음 형식으로 한 줄씩만 출력하라."
   ].join("\n");
 }
 
-function parseAiIdentification(response) {
+export function parseAiIdentification(response) {
   let raw = response && (response.response || response.result || response.choices?.[0]?.message?.content);
+  if (!raw) raw = collectAiResponseText(response);
   if (Array.isArray(raw)) {
     raw = raw.map(function (part) { return typeof part === "string" ? part : part && (part.text || part.content) || ""; }).join("");
   }
@@ -362,8 +364,55 @@ function parseAiIdentification(response) {
   const fenced = textValue.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = fenced.indexOf("{");
   const end = fenced.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("AI response did not contain JSON");
-  return sanitizeAiIdentification(JSON.parse(fenced.slice(start, end + 1)));
+  if (start >= 0 && end > start) {
+    try { return sanitizeAiIdentification(JSON.parse(fenced.slice(start, end + 1))); } catch (_error) { /* try tolerant formats below */ }
+  }
+  const recovered = recoverAiCandidates(collectAiResponseText(response) || textValue);
+  if (recovered.candidates.length) return recovered;
+  throw new Error("AI response did not contain identifiable candidates");
+}
+
+function collectAiResponseText(value, depth, seen) {
+  const level = depth || 0;
+  const visited = seen || new Set();
+  if (level > 7 || value === null || value === undefined) return "";
+  if (typeof value === "string") return value.length <= 20000 ? value : "";
+  if (typeof value !== "object" || visited.has(value)) return "";
+  visited.add(value);
+  if (Array.isArray(value)) return value.map(function (item) { return collectAiResponseText(item, level + 1, visited); }).filter(Boolean).join("\n");
+  return Object.keys(value).filter(function (key) {
+    return !/^(id|object|model|created|system_fingerprint|usage|finish_reason|role)$/i.test(key);
+  }).map(function (key) { return collectAiResponseText(value[key], level + 1, visited); }).filter(Boolean).join("\n");
+}
+
+function recoverAiCandidates(textValue) {
+  const text = String(textValue || "").replace(/```(?:json)?/gi, " ");
+  const lineCandidates = text.split(/\r?\n/).filter(function (line) { return /^\s*CANDIDATE\s*\|/i.test(line); }).map(function (line) {
+    const parts = line.split("|").map(function (part) { return part.trim(); });
+    return { name: parts[1], scientific: parts[2], clue: parts[3], confidence: parts[4] };
+  });
+  if (lineCandidates.length) return sanitizeAiIdentification({ candidates: lineCandidates, uncertain: true, note: "AI 응답을 후보 형식으로 복구했습니다. 대표 사진과 특징을 꼭 비교해 주세요." });
+
+  const candidates = [];
+  const found = new Set();
+  const expression = /\b([A-Z][a-zA-Z.-]+\s+(?:[a-z][a-zA-Z.-]+|sp\.))/g;
+  let match;
+  while ((match = expression.exec(text)) && candidates.length < 3) {
+    const scientific = normalizeScientificName(match[1]);
+    if (!scientific || found.has(scientific.toLowerCase())) continue;
+    found.add(scientific.toLowerCase());
+    const before = text.slice(Math.max(0, match.index - 45), match.index);
+    const koreanNames = before.match(/[가-힣]{2,20}/g) || [];
+    const sentenceStart = Math.max(text.lastIndexOf(".", match.index - 1), text.lastIndexOf("\n", match.index - 1));
+    const sentenceEnd = [text.indexOf(".", match.index), text.indexOf("\n", match.index)].filter(function (index) { return index >= 0; }).sort(function (a, b) { return a - b; })[0];
+    candidates.push({
+      name: koreanNames[koreanNames.length - 1] || scientific,
+      scientific,
+      clue: optionalAiText(text.slice(sentenceStart + 1, sentenceEnd >= 0 ? sentenceEnd : Math.min(text.length, match.index + 180)), 240),
+      confidence: "낮음"
+    });
+  }
+  return sanitizeAiIdentification({ candidates, uncertain: true, note: candidates.length ? "AI 설명에서 학명 후보를 복구했습니다. 대표 사진과 특징을 꼭 비교해 주세요." : "" });
 }
 
 function sanitizeAiIdentification(value) {
