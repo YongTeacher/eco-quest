@@ -300,9 +300,8 @@ async function identifyOrganism({ request, env }, user) {
           { type: "image_url", image_url: { url: dataUrl } }
         ] }
       ],
-      max_completion_tokens: 700,
-      temperature: 0.1,
-      response_format: { type: "json_object" }
+      max_tokens: 700,
+      temperature: 0.1
     }, { rejectIfBusy: true });
     const parsed = parseAiIdentification(aiResponse);
     const candidates = await validateTaxa(parsed.candidates);
@@ -323,8 +322,21 @@ async function identifyOrganism({ request, env }, user) {
     if (/quota|limit|neurons|capacity|busy|3040|429/i.test(message)) {
       return json({ ok: false, error: "현재 무료 AI 할당량 또는 처리 용량을 사용할 수 없습니다. 직접 동정하기를 이용해 주세요." }, 429);
     }
-    return json({ ok: false, error: "사진 분석에 실패했습니다. 잠시 후 다시 시도하거나 직접 동정해 주세요." }, 502);
+    return json({
+      ok: false,
+      error: "사진 분석에 실패했습니다. 잠시 후 다시 시도하거나 직접 동정해 주세요. (진단: " + aiErrorDiagnostic(message) + ")"
+    }, 502);
   }
+}
+
+function aiErrorDiagnostic(message) {
+  const value = String(message || "");
+  const numbered = value.match(/(?:code|error)[\s:[\]()_-]*(\d{3,6})/i) || value.match(/\b(\d{4})\b/);
+  if (numbered) return "AI-" + numbered[1];
+  if (/json|parse|response/i.test(value)) return "AI-RESPONSE";
+  if (/model|schema|input|parameter|image/i.test(value)) return "AI-INPUT";
+  if (/binding|configuration|not found/i.test(value)) return "AI-CONFIG";
+  return "AI-RUNTIME";
 }
 
 function organismIdentificationPrompt(category, features) {

@@ -74,6 +74,8 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
     assert.equal(body.limits.daily_limit, 100);
     const aiCall = calls.find(function (call) { return call.model; });
     assert.equal(aiCall.model, "@cf/google/gemma-4-26b-a4b-it");
+    assert.equal(aiCall.input.max_tokens, 700);
+    assert.equal(aiCall.input.response_format, undefined);
     assert.match(aiCall.input.messages[1].content[0].text, /낫 모양의 앞다리/);
     assert.match(aiCall.input.messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
   } finally {
