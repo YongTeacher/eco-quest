@@ -334,8 +334,11 @@ function organismIdentificationPrompt(category, features) {
 }
 
 function parseAiIdentification(response) {
-  const raw = response && (response.response || response.result || response.choices?.[0]?.message?.content);
-  if (raw && typeof raw === "object") return sanitizeAiIdentification(raw);
+  let raw = response && (response.response || response.result || response.choices?.[0]?.message?.content);
+  if (Array.isArray(raw)) {
+    raw = raw.map(function (part) { return typeof part === "string" ? part : part && (part.text || part.content) || ""; }).join("");
+  }
+  if (raw && typeof raw === "object" && Array.isArray(raw.candidates)) return sanitizeAiIdentification(raw);
   const textValue = String(raw || "").trim();
   const fenced = textValue.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = fenced.indexOf("{");
@@ -348,15 +351,22 @@ function sanitizeAiIdentification(value) {
   const candidates = Array.isArray(value && value.candidates) ? value.candidates.slice(0, 3).map(function (item) {
     const confidence = ["높음", "보통", "낮음"].includes(String(item && item.confidence)) ? String(item.confidence) : "낮음";
     return {
-      name: optionalAiText(item && item.name, 80),
-      scientific: optionalAiText(item && item.scientific, 120),
-      clue: optionalAiText(item && item.clue, 240),
+      name: optionalAiText(item && (item.name || item.common_name || item.korean_name), 80),
+      scientific: normalizeScientificName(item && (item.scientific || item.scientific_name || item.latin_name)),
+      clue: optionalAiText(item && (item.clue || item.reason || item.evidence), 240),
       confidence
     };
   }).filter(function (item) {
-    return item.name && /^[A-Z][A-Za-z.-]+(?:\s+[a-z][A-Za-z.-]+|\s+sp\.)?$/.test(item.scientific);
+    return item.name && item.scientific;
   }) : [];
   return { candidates, uncertain: Boolean(value && value.uncertain), note: optionalAiText(value && value.note, 240) };
+}
+
+function normalizeScientificName(value) {
+  const cleaned = optionalAiText(value, 160).replace(/[*_`'"“”]/g, " ").replace(/\s+/g, " ").trim();
+  const match = cleaned.match(/\b([A-Z][A-Za-z.-]+)(?:\s+([a-z][A-Za-z.-]+|sp\.|spp\.))?/);
+  if (!match) return "";
+  return match[1] + (match[2] ? " " + (match[2] === "spp." ? "sp." : match[2]) : "");
 }
 
 function optionalAiText(value, max) {
@@ -372,7 +382,9 @@ async function validateTaxa(candidates) {
       });
       if (!response.ok) return null;
       const body = await response.json();
-      const taxon = (body.results || []).find(function (item) { return String(item.name || "").toLowerCase() === query.toLowerCase(); });
+      const taxon = (body.results || []).find(function (item) {
+        return [item.name, item.matched_term].some(function (name) { return String(name || "").toLowerCase() === query.toLowerCase(); });
+      });
       if (!taxon) return null;
       return {
         ...candidate,
@@ -381,7 +393,7 @@ async function validateTaxa(candidates) {
         icon: "🔎"
       };
     } catch (_error) {
-      return null;
+      return { ...candidate, confidence: "낮음", clue: candidate.clue + " · 학명 데이터베이스 연결 확인 필요", icon: "🔎", verified: false };
     }
   }));
   return checked.filter(Boolean);

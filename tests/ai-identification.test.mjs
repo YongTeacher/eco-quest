@@ -40,7 +40,7 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
         calls.push({ model, input });
         return {
           choices: [{ message: { content: JSON.stringify({
-            candidates: [{ name: "왕사마귀", scientific: "Tenodera sinensis", clue: "낫 모양 앞다리와 긴 앞가슴", confidence: "높음" }],
+            candidates: [{ common_name: "왕사마귀", scientific_name: "*Tenodera sinensis* (Saussure, 1871)", evidence: "낫 모양 앞다리와 긴 앞가슴", confidence: "높음" }],
             uncertain: false,
             note: "사마귀류의 형태가 뚜렷합니다."
           }) } }]

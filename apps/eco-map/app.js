@@ -1289,7 +1289,7 @@
       form.append("features", features);
       return api("identify", { method: "POST", body: form });
     }).then(function (result) {
-      renderCandidates(result.candidates || []);
+      renderCandidates(result.candidates || [], "신뢰할 만한 자동 후보를 찾지 못했습니다.", result.note);
       document.getElementById("candidate-section").hidden = false;
       var remaining = result.limits ? Math.max(0, Number(result.limits.student_limit) - Number(result.limits.student_used)) : null;
       showToast(result.note + (remaining === null ? "" : " · 오늘 개인 분석 " + remaining + "회 남음"));
@@ -1297,7 +1297,7 @@
     }).catch(function (error) {
       showToast(error.message);
       document.getElementById("candidate-section").hidden = false;
-      renderCandidates([]);
+      renderCandidates([], "AI 사진 분석을 완료하지 못했습니다.", error.message);
       document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }).finally(function () {
       button.disabled = false;
@@ -1305,9 +1305,9 @@
     });
   });
 
-  function renderCandidates(items) {
+  function renderCandidates(items, emptyTitle, emptyMessage) {
     if (!items.length) {
-      document.getElementById("candidate-list").innerHTML = '<div class="candidate-empty"><b>신뢰할 만한 자동 후보를 찾지 못했습니다.</b><span>다른 각도의 사진으로 다시 시도하거나 아래의 직접 동정하기를 이용해 주세요.</span></div>';
+      document.getElementById("candidate-list").innerHTML = '<div class="candidate-empty"><b>' + escapeHtml(emptyTitle || "신뢰할 만한 자동 후보를 찾지 못했습니다.") + '</b><span>' + escapeHtml(emptyMessage || "다른 각도의 사진으로 다시 시도하거나 아래의 직접 동정하기를 이용해 주세요.") + '</span><small>다른 각도의 사진으로 다시 시도하거나 아래의 직접 동정하기를 이용할 수 있습니다.</small></div>';
       return;
     }
     document.getElementById("candidate-list").innerHTML = items.map(function (item, index) {
