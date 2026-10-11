@@ -49,7 +49,11 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
         calls.push({ model, input });
         return {
           choices: [{ message: { content: JSON.stringify({
-            candidates: [{ common_name: "왕사마귀", scientific_name: "*Tenodera sinensis* (Saussure, 1871)", evidence: "낫 모양 앞다리와 긴 앞가슴", confidence: "높음" }],
+            observed_group: "곤충·사마귀목", image_quality: "좋음", visible_traits: ["낫 모양 앞다리", "긴 앞가슴"],
+            candidates: [
+              { common_name: "왕사마귀", scientific_name: "*Tenodera sinensis* (Saussure, 1871)", evidence: "낫 모양 앞다리와 긴 앞가슴", confidence: "높음" },
+              { common_name: "데이지", scientific_name: "Bellis perennis", evidence: "분류가 맞지 않는 시험 후보", confidence: "낮음" }
+            ],
             uncertain: false,
             note: "사마귀류의 형태가 뚜렷합니다."
           }) } }]
@@ -61,13 +65,21 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async function (url) {
     assert.match(String(url), /api\.inaturalist\.org\/v1\/taxa/);
-    return Response.json({ results: [{ name: "Tenodera sinensis", preferred_common_name: "왕사마귀" }] });
+    if (String(url).includes("Bellis")) {
+      return Response.json({ results: [{ name: "Bellis perennis", preferred_common_name: "데이지", iconic_taxon_name: "Plantae" }] });
+    }
+    return Response.json({ results: [{
+      name: "Tenodera sinensis", preferred_common_name: "왕사마귀", iconic_taxon_name: "Insecta",
+      default_photo: { id: 123, license_code: "cc-by", medium_url: "https://static.example/mantis-medium.jpg", square_url: "https://static.example/mantis-square.jpg", attribution: "(c) 생태 관찰자, CC BY" }
+    }] });
   };
   try {
     const form = new FormData();
     form.append("photo", new File([new Uint8Array([1, 2, 3])], "mantis.jpg", { type: "image/jpeg" }));
+    form.append("photo_2", new File([new Uint8Array([4, 5, 6])], "mantis-side.jpg", { type: "image/jpeg" }));
     form.append("category", "insect");
     form.append("features", "낫 모양의 앞다리와 긴 몸");
+    form.append("student_guess", "사마귀");
     const response = await onRequest({
       request: new Request("https://example.test/api/eco/identify", {
         method: "POST", headers: { Cookie: "eco_session=test-token" }, body: form
@@ -79,14 +91,24 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
     const body = await response.json();
     assert.equal(body.candidates[0].name, "왕사마귀");
     assert.equal(body.candidates[0].scientific, "Tenodera sinensis");
+    assert.equal(body.candidates.length, 1);
+    assert.equal(body.candidates[0].photo.license_code, "cc-by");
+    assert.equal(body.candidates[0].photo.medium_url, "https://static.example/mantis-medium.jpg");
+    assert.equal(body.observed_group, "곤충·사마귀목");
+    assert.deepEqual(body.visible_traits, ["낫 모양 앞다리", "긴 앞가슴"]);
     assert.equal(body.limits.student_limit, 3);
     assert.equal(body.limits.daily_limit, 100);
     const aiCall = calls.find(function (call) { return call.model; });
     assert.equal(aiCall.model, "@cf/google/gemma-4-26b-a4b-it");
-    assert.equal(aiCall.input.max_tokens, 700);
+    assert.equal(aiCall.input.max_tokens, 900);
+    assert.equal(aiCall.input.temperature, 0);
+    assert.equal(aiCall.input.chat_template_kwargs.enable_thinking, false);
+    assert.equal(aiCall.input.guided_json.type, "object");
     assert.equal(aiCall.input.response_format, undefined);
     assert.match(aiCall.input.messages[1].content[0].text, /낫 모양의 앞다리/);
+    assert.match(aiCall.input.messages[1].content[0].text, /학생이 먼저 생각한 이름: 사마귀/);
     assert.match(aiCall.input.messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
+    assert.match(aiCall.input.messages[1].content[2].image_url.url, /^data:image\/jpeg;base64,/);
   } finally {
     globalThis.fetch = originalFetch;
   }

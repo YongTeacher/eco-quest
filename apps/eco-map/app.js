@@ -1328,22 +1328,30 @@
     if (!observationBasicsReady("분석")) return;
     var button = this;
     button.disabled = true;
-    button.innerHTML = "사진과 특징을 비교하는 중…";
-    makeAiAnalysisPhoto(photos[0].file).then(function (analysisPhoto) {
+    button.innerHTML = photos.length > 1 ? photos.length + "장의 사진을 함께 비교하는 중…" : "사진과 특징을 비교하는 중…";
+    Promise.all(photos.slice(0, 3).map(function (photo) { return makeAiAnalysisPhoto(photo.file); })).then(function (analysisPhotos) {
       var form = new FormData();
-      form.append("photo", analysisPhoto, analysisPhoto.name);
+      analysisPhotos.forEach(function (analysisPhoto, index) {
+        form.append(index === 0 ? "photo" : "photo_" + (index + 1), analysisPhoto, "eco-ai-photo-" + (index + 1) + ".jpg");
+      });
       form.append("category", category);
       form.append("features", features);
+      if (!document.getElementById("unknown-species-check").checked) {
+        form.append("student_guess", document.getElementById("student-species-input").value.trim());
+      }
       return api("identify", { method: "POST", body: form });
     }).then(function (result) {
       renderCandidates(result.candidates || [], "신뢰할 만한 자동 후보를 찾지 못했습니다.", result.note);
+      renderCandidateAnalysisSummary(result);
       document.getElementById("candidate-section").hidden = false;
       var remaining = result.limits ? Math.max(0, Number(result.limits.student_limit) - Number(result.limits.student_used)) : null;
-      showToast(result.note + (remaining === null ? "" : " · 오늘 개인 분석 " + remaining + "회 남음"));
+      var quality = result.image_quality ? " · 사진 품질 " + result.image_quality : "";
+      showToast((result.note || "AI 후보를 확인해 주세요.") + quality + (remaining === null ? "" : " · 오늘 개인 분석 " + remaining + "회 남음"));
       document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }).catch(function (error) {
       showToast("AI 도움을 받을 수 없어요. 직접 작성한 이름으로 계속 등록할 수 있습니다.");
       document.getElementById("candidate-section").hidden = false;
+      renderCandidateAnalysisSummary(null);
       renderCandidates([], "AI 도움을 지금 사용할 수 없어요.", "오류와 관계없이 위의 직접 입력란에서 이름을 적거나 미확인 상태로 등록할 수 있습니다.");
       document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }).finally(function () {
@@ -1351,6 +1359,19 @@
       button.innerHTML = "AI 후보 다시 추천받기 <span>✦</span>";
     });
   });
+
+  function renderCandidateAnalysisSummary(result) {
+    var summary = document.getElementById("candidate-analysis-summary");
+    if (!result || (!result.observed_group && !(result.visible_traits || []).length)) {
+      summary.hidden = true;
+      summary.innerHTML = "";
+      return;
+    }
+    var traits = (result.visible_traits || []).map(function (trait) { return escapeHtml(trait); }).join(" · ");
+    summary.innerHTML = '<b>AI가 먼저 확인한 큰 무리: ' + escapeHtml(result.observed_group || "판별 어려움") + '</b>' +
+      '<span>사진 품질: ' + escapeHtml(result.image_quality || "보통") + (traits ? " · 보이는 특징: " + traits : "") + '</span>';
+    summary.hidden = false;
+  }
 
   function renderCandidates(items, emptyTitle, emptyMessage) {
     if (!items.length) {
@@ -1395,7 +1416,7 @@
 
   function findLicensedTaxonPhoto(scientificName) {
     if (candidatePhotoCache[scientificName]) return candidatePhotoCache[scientificName];
-    var endpoint = "https://api.inaturalist.org/v1/taxa?q=" + encodeURIComponent(scientificName) + "&rank=species&per_page=10";
+    var endpoint = "https://api.inaturalist.org/v1/taxa?q=" + encodeURIComponent(scientificName) + "&locale=ko&per_page=10";
     candidatePhotoCache[scientificName] = window.fetch(endpoint).then(function (response) {
       if (!response.ok) throw new Error("대표 사진 조회 실패");
       return response.json();
@@ -1413,7 +1434,8 @@
   function loadCandidatePhotos(items) {
     items.forEach(function (item, index) {
       if (/^(Taxon incertae sedis|Unidentified organism|Manual identification)$/i.test(item.scientific)) return;
-      findLicensedTaxonPhoto(item.scientific).then(function (photo) {
+      var embeddedPhoto = candidatePhotoData(item.photo);
+      (embeddedPhoto ? Promise.resolve(embeddedPhoto) : findLicensedTaxonPhoto(item.scientific)).then(function (photo) {
         if (photo) return photo;
         var relatedTaxon = item.scientific.split(/\s+/)[0];
         return relatedTaxon ? findLicensedObservationPhoto(relatedTaxon) : null;
@@ -1542,6 +1564,7 @@
     renderPhotos();
     document.getElementById("candidate-section").hidden = true;
     document.getElementById("research-section").hidden = true;
+    renderCandidateAnalysisSummary(null);
     document.getElementById("location-coordinate").textContent = "아직 위치가 선택되지 않았습니다.";
     document.getElementById("location-coordinate").classList.remove("selected");
   }

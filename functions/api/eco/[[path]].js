@@ -5,10 +5,37 @@ const THUMBNAIL_MAX_BYTES = 150 * 1024;
 const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const AI_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+const AI_PHOTO_MAX_COUNT = 3;
+const AI_CACHE_VERSION = 3;
 const AI_DAILY_LIMIT = 100;
 const AI_STUDENT_DAILY_LIMIT = 3;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
 const IDENTIFICATION_STATUSES = new Set(["확실함", "추정", "교사 확인 필요"]);
+const AI_IDENTIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    observed_group: { type: "string" },
+    image_quality: { type: "string", enum: ["좋음", "보통", "낮음"] },
+    visible_traits: { type: "array", items: { type: "string" }, maxItems: 6 },
+    candidates: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          scientific: { type: "string" },
+          clue: { type: "string" },
+          confidence: { type: "string", enum: ["높음", "보통", "낮음"] }
+        },
+        required: ["name", "scientific", "clue", "confidence"]
+      }
+    },
+    uncertain: { type: "boolean" },
+    note: { type: "string" }
+  },
+  required: ["observed_group", "image_quality", "visible_traits", "candidates", "uncertain", "note"]
+};
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
 let trashSchemaPromise;
@@ -233,24 +260,30 @@ async function identifyOrganism({ request, env }, user) {
     .bind(new Date(Date.now() - 10 * 60 * 1000).toISOString()).run();
 
   const form = await request.formData();
-  const photo = form.get("photo");
+  const photos = [form.get("photo"), form.get("photo_2"), form.get("photo_3")].filter(function (photo) {
+    return photo instanceof File && photo.size;
+  }).slice(0, AI_PHOTO_MAX_COUNT);
   const category = String(form.get("category") || "");
   const features = text(form.get("features"), 2, 1000, "관찰 특징");
-  if (!(photo instanceof File) || !photo.size) return json({ ok: false, error: "분석할 대표 사진을 선택해 주세요." }, 400);
-  if (photo.size > AI_PHOTO_MAX_BYTES) return json({ ok: false, error: "AI 분석용 사진은 2MB 이하여야 합니다." }, 413);
-  if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(photo.type)) {
-    return json({ ok: false, error: "AI 분석은 JPG, PNG 또는 WEBP 사진을 사용해 주세요." }, 400);
+  const studentGuess = optionalAiText(form.get("student_guess"), 80);
+  if (!photos.length) return json({ ok: false, error: "분석할 생물 사진을 선택해 주세요." }, 400);
+  for (const photo of photos) {
+    if (photo.size > AI_PHOTO_MAX_BYTES) return json({ ok: false, error: "AI 분석용 사진은 장당 2MB 이하여야 합니다." }, 413);
+    if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(photo.type)) {
+      return json({ ok: false, error: "AI 분석은 JPG, PNG 또는 WEBP 사진을 사용해 주세요." }, 400);
+    }
   }
   if (!CATEGORIES.has(category)) return json({ ok: false, error: "생물 분류를 선택해 주세요." }, 400);
 
-  const bytes = new Uint8Array(await photo.arrayBuffer());
-  const requestHash = await sha256Bytes(joinBytes(bytes, new TextEncoder().encode("\n" + category + "\n" + features.toLowerCase())));
+  const photoBytes = await Promise.all(photos.map(async function (photo) { return new Uint8Array(await photo.arrayBuffer()); }));
+  const hashBytes = photoBytes.reduce(function (joined, bytes) { return joinBytes(joined, bytes); }, new Uint8Array());
+  const requestHash = await sha256Bytes(joinBytes(hashBytes, new TextEncoder().encode("\n" + category + "\n" + features.toLowerCase() + "\n" + studentGuess.toLowerCase())));
   const cached = await env.ECO_DB.prepare(
     "SELECT result_json FROM ai_identification_requests WHERE student_id = ? AND request_hash = ? AND status = 'completed'"
   ).bind(user.id, requestHash).first();
   if (cached && cached.result_json) {
     const cachedResult = JSON.parse(cached.result_json);
-    if (cachedResult.cache_version === 2 || (cachedResult.candidates && cachedResult.candidates.length)) {
+    if (cachedResult.cache_version === AI_CACHE_VERSION) {
       const usage = await aiUsage(env.ECO_DB, user.id, utcDate());
       return json({ ok: true, ...cachedResult, cached: true, limits: usage });
     }
@@ -291,26 +324,44 @@ async function identifyOrganism({ request, env }, user) {
   }
 
   try {
-    const dataUrl = "data:" + photo.type + ";base64," + bytesToBase64(bytes);
-    const prompt = organismIdentificationPrompt(category, features);
-    const aiResponse = await env.AI.run(AI_MODEL, {
+    const prompt = organismIdentificationPrompt(category, features, studentGuess, photos.length);
+    const userContent = [{ type: "text", text: prompt }].concat(photos.map(function (photo, index) {
+      return {
+        type: "image_url",
+        image_url: { url: "data:" + photo.type + ";base64," + bytesToBase64(photoBytes[index]) }
+      };
+    }));
+    const modelInput = {
       messages: [
-        { role: "system", content: "You are a cautious field biologist identifying organisms photographed on a Korean school campus. Never invent certainty or ignore contradictions." },
-        { role: "user", content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: dataUrl } }
-        ] }
+        { role: "system", content: "You are a cautious Korean field biologist. Identify only organisms supported by visible morphology. Never invent certainty, ignore contradictions, or force a species-level answer." },
+        { role: "user", content: userContent }
       ],
-      max_tokens: 700,
-      temperature: 0.1
-    }, { rejectIfBusy: true });
+      guided_json: AI_IDENTIFICATION_SCHEMA,
+      chat_template_kwargs: { enable_thinking: false },
+      max_tokens: 900,
+      temperature: 0,
+      top_p: 0.2,
+      seed: 42
+    };
+    let aiResponse;
+    try {
+      aiResponse = await env.AI.run(AI_MODEL, modelInput, { rejectIfBusy: true });
+    } catch (structuredError) {
+      if (!/guided|schema|json|format/i.test(String(structuredError && structuredError.message || structuredError))) throw structuredError;
+      const fallbackInput = { ...modelInput };
+      delete fallbackInput.guided_json;
+      aiResponse = await env.AI.run(AI_MODEL, fallbackInput, { rejectIfBusy: true });
+    }
     const parsed = parseAiIdentification(aiResponse);
-    const candidates = await validateTaxa(parsed.candidates);
+    const candidates = await validateTaxa(parsed.candidates, category);
     const result = {
-      cache_version: 2,
+      cache_version: AI_CACHE_VERSION,
       candidates,
       uncertain: Boolean(parsed.uncertain) || candidates.length === 0,
-      note: optionalAiText(parsed.note, 240) || (candidates.length ? "사진과 관찰 특징을 함께 비교한 후보입니다." : "사진만으로 신뢰할 만한 후보를 찾지 못했습니다. 직접 동정해 주세요.")
+      observed_group: parsed.observed_group,
+      image_quality: parsed.image_quality,
+      visible_traits: parsed.visible_traits,
+      note: optionalAiText(parsed.note, 240) || (candidates.length ? photos.length + "장의 사진과 관찰 특징을 함께 비교한 후보입니다." : "사진과 분류가 일치하는 신뢰할 만한 후보를 찾지 못했습니다. 직접 동정해 주세요.")
     };
     await env.ECO_DB.prepare(
       "UPDATE ai_identification_requests SET status = 'completed', result_json = ?, updated_at = ? WHERE id = ?"
@@ -340,16 +391,20 @@ function aiErrorDiagnostic(message) {
   return "AI-RUNTIME";
 }
 
-function organismIdentificationPrompt(category, features) {
-  const labels = { plant: "식물", insect: "곤충·절지동물", bird: "조류", animal: "그 밖의 동물", water: "수서생물·양서류", fungi: "균류·버섯", etc: "기타 생물" };
+function organismIdentificationPrompt(category, features, studentGuess, photoCount) {
+  const labels = { plant: "식물", insect: "곤충·절지동물", bird: "조류", animal: "포유류", water: "수서생물·양서류·파충류", fungi: "균류·버섯", etc: "기타 생물" };
   return [
-    "사진 속 주된 생물을 동정하라. 촬영지는 대한민국 경기도 용인시의 학교 주변이다.",
-    "학생이 선택한 분류: " + labels[category] + " (사진과 명백히 다르면 그 사실을 note에 써라)",
+    "다음 " + photoCount + "장의 사진은 같은 생물을 여러 각도에서 촬영한 것이다. 사진 속 주된 생물을 동정하라. 촬영지는 대한민국 경기도 용인시의 학교 주변이다.",
+    "1단계: 몸의 기본 구조를 먼저 판별하라. 식물/곤충/거미류/새/포유류/양서류/파충류/어류/균류 중 어느 무리인지 확인하라.",
+    "2단계: 사진에서 실제로 보이는 색, 몸마디, 다리·날개 수, 잎 배열, 꽃 모양 등 구별 형질을 visible_traits에 적어라.",
+    "3단계: 위 두 판단과 모순되지 않는 국내 관찰 가능 후보만 최대 3개 제시하라.",
+    "학생이 선택한 분류: " + labels[category] + ". 사진과 명백히 다르면 후보를 만들지 말고 그 사실을 note에 써라.",
     "학생이 눈으로 관찰한 특징: " + features,
-    "사진과 관찰 특징이 모두 맞는 후보만 가능성 순으로 최대 3개 제시하라.",
+    studentGuess ? "학생이 먼저 생각한 이름: " + studentGuess + ". 이것은 정답이 아닌 가설이므로 사진과 다르면 반드시 버려라." : "학생이 먼저 생각한 이름은 없다.",
+    "사마귀와 나비처럼 몸 구조나 목(order)이 다른 생물을 비슷한 후보로 섞지 마라. 후보마다 clue에 사진에서 확인되는 일치 형질을 구체적으로 적어라.",
     "종까지 확신할 수 없으면 속(genus) 또는 과(family) 수준으로 낮추고, 전혀 불명확하면 candidates를 빈 배열로 반환하라.",
-    "나비처럼 사진과 형태가 다른 후보를 억지로 넣지 마라. 한국에서 관찰 가능한 분류군인지 확인하라.",
-    "반드시 JSON만 반환하라: {\"candidates\":[{\"name\":\"한국어 이름\",\"scientific\":\"검증 가능한 라틴 학명 또는 속명\",\"clue\":\"사진과 관찰 특징에 근거한 짧은 구별점\",\"confidence\":\"높음|보통|낮음\"}],\"uncertain\":true,\"note\":\"주의할 점\"}",
+    "사진이 흐리거나 생물이 작으면 image_quality를 낮음으로 표시하고 높은 확신을 사용하지 마라. 배경 사물은 생물 후보로 만들지 마라.",
+    "반드시 JSON만 반환하라: {\"observed_group\":\"사진에서 판별한 큰 무리\",\"image_quality\":\"좋음|보통|낮음\",\"visible_traits\":[\"실제로 보이는 특징\"],\"candidates\":[{\"name\":\"한국어 이름\",\"scientific\":\"검증 가능한 라틴 학명 또는 속명\",\"clue\":\"사진과 관찰 특징에 근거한 구별점\",\"confidence\":\"높음|보통|낮음\"}],\"uncertain\":true,\"note\":\"학생에게 보여줄 한국어 주의사항\"}",
     "JSON 출력이 불가능하면 설명 없이 후보마다 CANDIDATE|한국어 이름|라틴 학명|구별점|높음 또는 보통 또는 낮음 형식으로 한 줄씩만 출력하라."
   ].join("\n");
 }
@@ -428,7 +483,18 @@ function sanitizeAiIdentification(value) {
   }).filter(function (item) {
     return item.name && item.scientific;
   }) : [];
-  return { candidates, uncertain: Boolean(value && value.uncertain), note: optionalAiText(value && value.note, 240) };
+  const visibleTraits = Array.isArray(value && value.visible_traits) ? value.visible_traits.slice(0, 6).map(function (trait) {
+    return optionalAiText(trait, 100);
+  }).filter(Boolean) : [];
+  const imageQuality = ["좋음", "보통", "낮음"].includes(String(value && value.image_quality)) ? String(value.image_quality) : "보통";
+  return {
+    candidates,
+    uncertain: Boolean(value && value.uncertain),
+    note: optionalAiText(value && value.note, 240),
+    observed_group: optionalAiText(value && value.observed_group, 80),
+    image_quality: imageQuality,
+    visible_traits: visibleTraits
+  };
 }
 
 function normalizeScientificName(value) {
@@ -442,7 +508,7 @@ function optionalAiText(value, max) {
   return String(value || "").replace(/[<>]/g, "").trim().slice(0, max);
 }
 
-async function validateTaxa(candidates) {
+async function validateTaxa(candidates, category) {
   const checked = await Promise.all(candidates.map(async function (candidate) {
     try {
       const query = candidate.scientific.replace(/\s+sp\.$/, "");
@@ -454,18 +520,47 @@ async function validateTaxa(candidates) {
       const taxon = (body.results || []).find(function (item) {
         return [item.name, item.matched_term].some(function (name) { return String(name || "").toLowerCase() === query.toLowerCase(); });
       });
-      if (!taxon) return null;
+      if (!taxon || !taxonMatchesCategory(taxon, category)) return null;
       return {
         ...candidate,
         name: taxon.preferred_common_name || candidate.name || query,
         scientific: taxon.name,
-        icon: "🔎"
+        icon: "🔎",
+        photo: publicTaxonPhoto(taxon.default_photo)
       };
     } catch (_error) {
       return { ...candidate, confidence: "낮음", clue: candidate.clue + " · 학명 데이터베이스 연결 확인 필요", icon: "🔎", verified: false };
     }
   }));
   return checked.filter(Boolean);
+}
+
+function publicTaxonPhoto(photo) {
+  const allowed = new Set(["cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"]);
+  if (!photo || !allowed.has(String(photo.license_code || "").toLowerCase())) return null;
+  return {
+    id: photo.id,
+    license_code: String(photo.license_code || "").toLowerCase(),
+    medium_url: photo.medium_url || "",
+    square_url: photo.square_url || "",
+    url: photo.url || "",
+    attribution: optionalAiText(photo.attribution, 200),
+    attribution_name: optionalAiText(photo.attribution_name, 120)
+  };
+}
+
+function taxonMatchesCategory(taxon, category) {
+  const iconic = String(taxon && taxon.iconic_taxon_name || "");
+  if (!iconic || category === "etc") return true;
+  const accepted = {
+    plant: new Set(["Plantae"]),
+    insect: new Set(["Insecta", "Arachnida"]),
+    bird: new Set(["Aves"]),
+    animal: new Set(["Mammalia"]),
+    water: new Set(["Amphibia", "Reptilia", "Actinopterygii", "Mollusca", "Animalia"]),
+    fungi: new Set(["Fungi"])
+  };
+  return !accepted[category] || accepted[category].has(iconic);
 }
 
 async function aiUsage(db, studentId, day) {

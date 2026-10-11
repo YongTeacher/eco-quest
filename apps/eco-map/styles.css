@@ -276,6 +276,10 @@ a { color: inherit; text-decoration: none; }
 .analyze-button.secondary-button { border: 1px solid var(--forest-700); color: var(--forest-700); background: var(--white); }
 .manual-identification-box input:disabled { color: var(--muted); background: #e8ece5; }
 .candidate-panel, .research-panel { grid-column: 1 / -1; }
+.candidate-analysis-summary { display: grid; gap: 7px; margin: -2px 0 15px; padding: 13px 15px; border-left: 4px solid var(--sun); border-radius: 0 11px 11px 0; background: #fff9df; color: var(--forest-900); font-size: 13px; line-height: 1.55; }
+.candidate-analysis-summary b { font-size: 14px; }
+.candidate-analysis-summary span { color: var(--muted); }
+.candidate-analysis-summary[hidden] { display: none; }
 .candidate-list { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 14px; }
 .candidate-empty { grid-column: 1 / -1; display: grid; gap: 6px; padding: 22px; border: 1px dashed #aab8a3; border-radius: 15px; color: var(--muted); background: #f7f9f1; text-align: center; }
 .candidate-empty b { color: var(--forest-800); font-size: 15px; }
