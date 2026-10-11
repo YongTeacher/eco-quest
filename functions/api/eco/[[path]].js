@@ -38,6 +38,7 @@ const AI_IDENTIFICATION_SCHEMA = {
 };
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
+let settingsSchemaPromise;
 let trashSchemaPromise;
 let aiIdentificationSchemaPromise;
 const PHOTO_TYPES = new Map([
@@ -96,6 +97,8 @@ async function route(context) {
   if (method === "GET" && path === "admin/guides") return listAdminGuides(context, user);
   if (method === "GET" && path === "admin/reflections") return listAdminReflections(context, user);
   if (method === "PATCH" && path === "admin/reflections/settings") return updateReflectionSettings(context, user);
+  if (method === "GET" && path === "admin/class-code") return getClassCodeSetting(context, user);
+  if (method === "PATCH" && path === "admin/class-code") return updateClassCodeSetting(context, user);
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
@@ -135,7 +138,8 @@ async function studentLogin(context) {
   const studentName = text(body.student_name, 2, 30, "이름");
   const pin = String(body.pin || "");
   if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: "PIN은 숫자 4자리로 입력해 주세요." }, 400);
-  if (!(await secretsEqual(String(body.class_code || ""), env.ECO_CLASS_CODE))) {
+  const classCode = await effectiveClassCode(env);
+  if (!(await secretsEqual(normalizeClassCode(body.class_code), normalizeClassCode(classCode)))) {
     return json({ ok: false, error: "수업 코드가 올바르지 않습니다." }, 401);
   }
 
@@ -1106,16 +1110,46 @@ export async function purgeExpiredTrash(env, now = new Date()) {
 
 async function ensureReflectionSchema(env) {
   if (!reflectionSchemaPromise) {
-    reflectionSchemaPromise = env.ECO_DB.batch([
-      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS reflections (student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE, memorable_species TEXT NOT NULL DEFAULT '', contribution TEXT NOT NULL DEFAULT '', problem_solving TEXT NOT NULL DEFAULT '', ecological_learning TEXT NOT NULL DEFAULT '', perspective_change TEXT NOT NULL DEFAULT '', further_question TEXT NOT NULL DEFAULT '', free_reflection TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted')), created_at TEXT NOT NULL, submitted_at TEXT, updated_at TEXT NOT NULL)"),
-      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS eco_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)"),
-      env.ECO_DB.prepare("INSERT OR IGNORE INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('reflection_edit_after_submit', '0', ?)").bind(new Date().toISOString())
-    ]).catch(function (error) {
+    reflectionSchemaPromise = ensureSettingsSchema(env).then(function () {
+      return env.ECO_DB.batch([
+        env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS reflections (student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE, memorable_species TEXT NOT NULL DEFAULT '', contribution TEXT NOT NULL DEFAULT '', problem_solving TEXT NOT NULL DEFAULT '', ecological_learning TEXT NOT NULL DEFAULT '', perspective_change TEXT NOT NULL DEFAULT '', further_question TEXT NOT NULL DEFAULT '', free_reflection TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted')), created_at TEXT NOT NULL, submitted_at TEXT, updated_at TEXT NOT NULL)"),
+        env.ECO_DB.prepare("INSERT OR IGNORE INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('reflection_edit_after_submit', '0', ?)").bind(new Date().toISOString())
+      ]);
+    }).catch(function (error) {
       reflectionSchemaPromise = null;
       throw error;
     });
   }
   return reflectionSchemaPromise;
+}
+
+async function ensureSettingsSchema(env) {
+  if (!settingsSchemaPromise) {
+    settingsSchemaPromise = env.ECO_DB.batch([
+      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS eco_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    ]).catch(function (error) {
+      settingsSchemaPromise = null;
+      throw error;
+    });
+  }
+  return settingsSchemaPromise;
+}
+
+async function effectiveClassCode(env) {
+  await ensureSettingsSchema(env);
+  const setting = await env.ECO_DB.prepare("SELECT setting_value FROM eco_settings WHERE setting_key = 'class_code'").first();
+  return setting && setting.setting_value ? setting.setting_value : String(env.ECO_CLASS_CODE || "");
+}
+
+function normalizeClassCode(value) {
+  return String(value || "").normalize("NFKC").trim().toLocaleUpperCase("ko-KR");
+}
+
+function validateClassCode(value) {
+  const code = String(value || "").normalize("NFKC").trim();
+  if (code.length < 4 || code.length > 30) throw new HttpError(400, "수업 코드는 4~30자로 입력해 주세요.");
+  if (!/^[\p{L}\p{N}-]+$/u.test(code)) throw new HttpError(400, "수업 코드는 한글·영문·숫자·하이픈(-)만 사용할 수 있습니다.");
+  return code;
 }
 
 async function reflectionEditsAllowed(env) {
@@ -1209,6 +1243,22 @@ async function updateReflectionSettings(context, user) {
   await env.ECO_DB.prepare("INSERT INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('reflection_edit_after_submit', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at")
     .bind(value, new Date().toISOString()).run();
   return json({ ok: true, allow_edits_after_submit: body.allow_edits_after_submit });
+}
+
+async function getClassCodeSetting({ env }, user) {
+  requireTeacher(user);
+  return json({ ok: true, class_code: await effectiveClassCode(env) });
+}
+
+async function updateClassCodeSetting(context, user) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureSettingsSchema(env);
+  const body = await readJson(request);
+  const classCode = validateClassCode(body.class_code);
+  await env.ECO_DB.prepare("INSERT INTO eco_settings (setting_key, setting_value, updated_at) VALUES ('class_code', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at")
+    .bind(classCode, new Date().toISOString()).run();
+  return json({ ok: true, class_code: classCode });
 }
 
 async function listAdminGuides({ request, env }, user) {

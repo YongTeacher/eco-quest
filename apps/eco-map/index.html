@@ -422,6 +422,14 @@
       </section>
 
       <section id="teacher-view-settings" class="teacher-view" hidden>
+        <section class="admin-panel class-code-panel">
+          <div><span class="pixel-label">STUDENT LOGIN</span><h2>학생 수업 코드</h2><p>학생들이 로그인 화면에 입력할 공통 코드를 변경합니다. 저장 즉시 새 코드가 적용되며 기존 학생 자료에는 영향을 주지 않습니다.</p></div>
+          <form id="class-code-form" class="class-code-form">
+            <label for="admin-class-code">현재 수업 코드</label>
+            <div><input id="admin-class-code" type="text" minlength="4" maxlength="30" autocomplete="off" spellcheck="false" placeholder="예: SG2026" required /><button id="save-class-code" class="admin-primary" type="submit">수업 코드 저장</button></div>
+            <small>4~30자의 한글·영문·숫자·하이픈(-)을 사용할 수 있습니다. 영문은 대소문자를 구분하지 않습니다.</small>
+          </form>
+        </section>
         <section class="admin-panel roster-guide-panel"><span class="pixel-label">HOW TO IMPORT</span><h2>나이스 출석부 명렬표 등록 방법</h2><ol><li>나이스에서 교과목의 <b>출석부 명렬표 XLSX·XLS·CSV</b>를 내려받습니다.</li><li><b>학생·모둠 탭</b>에서 1~9반 파일을 한꺼번에 선택하면 `반`, `번호`, `이름(성 명)` 열을 자동으로 찾아 합칩니다.</li><li>반 열이 없는 단일 파일은 학급을 선택하거나 파일명을 `1반.xlsx`처럼 지정합니다.</li><li>명단 등록 뒤 `1팀 - 1,2,4,6` 형식으로 팀을 일괄 배정합니다.</li><li>모둠이 배정된 학생만 반·번호·이름·모둠을 입력해 로그인할 수 있습니다.</li></ol><div class="csv-examples"><code>1반.xlsx ~ 9반.xlsx<br />반 · 번호 · 성 명<br />여러 파일 동시 선택 가능</code><code>1팀 - 1,2,4,6<br />2팀 - 3,5,7,8<br />3팀 - 9,10,11,12</code></div></section>
       </section>
     </main>

@@ -125,7 +125,7 @@
       guides: ["개인 생물도감", "학생 개인별로 완성한 생물도감과 조사 내용을 확인합니다."],
       reflections: ["학생 소감문", "개인별 탐사 성찰 내용과 최종 제출 상태를 확인합니다."],
       roster: ["학생·모둠 관리", "등록된 학생을 확인하고 모둠 번호를 직접 배정할 수 있습니다."],
-      settings: ["수업 설정", "학급 CSV 명단을 등록하고 로그인 준비 상태를 확인합니다."]
+      settings: ["수업 설정", "학생 로그인 코드와 수업 준비 정보를 관리합니다."]
     };
     var selected = labels[name] ? name : "dashboard";
     document.querySelectorAll(".teacher-view").forEach(function (view) {
@@ -142,8 +142,46 @@
     if (selected === "trash") loadAdminTrash();
     if (selected === "guides") loadAdminGuides();
     if (selected === "reflections") loadAdminReflections();
+    if (selected === "settings") loadClassCodeSetting();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  function loadClassCodeSetting() {
+    var input = document.getElementById("admin-class-code");
+    input.disabled = true;
+    api("admin/class-code").then(function (result) {
+      input.value = result.class_code || "";
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    }).finally(function () {
+      input.disabled = false;
+    });
+  }
+
+  document.getElementById("class-code-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var input = document.getElementById("admin-class-code");
+    var button = document.getElementById("save-class-code");
+    var classCode = input.value.trim();
+    if (!window.confirm("수업 코드를 '" + classCode + "'(으)로 변경할까요?\n변경 직후부터 학생은 새 코드를 입력해야 합니다.")) return;
+    button.disabled = true;
+    button.textContent = "저장 중…";
+    api("admin/class-code", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ class_code: classCode })
+    }).then(function (result) {
+      input.value = result.class_code;
+      showToast("수업 코드가 " + result.class_code + "(으)로 변경되었습니다.");
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "수업 코드 저장";
+    });
+  });
 
   function openLoginQr() {
     qrPreviousFocus = document.activeElement;
