@@ -48,6 +48,8 @@
   var adminPhotoMapRenderer;
   var adminRecordPreviousFocus;
   var currentReflection;
+  var pinResetStudent;
+  var pinResetPreviousFocus;
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -1921,7 +1923,7 @@
   function renderRoster() {
     var body = document.getElementById("roster-list-body");
     if (!rosterStudents.length) {
-      body.innerHTML = '<tr><td colspan="6" class="empty-message">선택한 범위에 등록된 학생이 없습니다.</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="empty-message">선택한 범위에 등록된 학생이 없습니다.</td></tr>';
       return;
     }
     body.innerHTML = rosterStudents.map(function (student) {
@@ -1930,7 +1932,8 @@
       return '<tr data-roster-id="' + escapeHtml(student.id) + '">' +
         '<td>' + student.class_number + '반</td><td>' + student.student_number + '번</td><td><b>' + escapeHtml(student.student_name) + '</b></td>' +
         '<td><select class="roster-group-select" data-current-group="' + escapeHtml(student.group_number || "") + '" aria-label="' + escapeHtml(student.student_name) + ' 모둠 선택">' + rosterGroupOptions(student.group_number) + '</select><small class="roster-save-state"></small></td>' +
-        '<td><span class="roster-state ' + stateClass + '">' + stateText + '</span></td><td>' + escapeHtml(student.last_login_at ? formatDate(student.last_login_at) : "-") + '</td></tr>';
+        '<td><span class="roster-state ' + stateClass + '">' + stateText + '</span></td><td>' + escapeHtml(student.last_login_at ? formatDate(student.last_login_at) : "-") + '</td>' +
+        '<td><button class="roster-pin-button" type="button" data-reset-pin="' + escapeHtml(student.id) + '"' + (student.registered ? '' : ' disabled title="아직 가입하지 않은 학생입니다."') + '>PIN 초기화</button></td></tr>';
     }).join("");
   }
 
@@ -1945,6 +1948,61 @@
       showToast(error.message);
     });
   }
+
+  function openPinReset(student) {
+    pinResetStudent = student;
+    pinResetPreviousFocus = document.activeElement;
+    document.getElementById("pin-reset-student").textContent = student.class_number + "반 " + student.student_number + "번 " + student.student_name;
+    document.getElementById("pin-reset-form").reset();
+    document.getElementById("pin-reset-modal").hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("new-student-pin").focus();
+  }
+
+  function closePinReset() {
+    document.getElementById("pin-reset-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+    pinResetStudent = null;
+    if (pinResetPreviousFocus && typeof pinResetPreviousFocus.focus === "function") pinResetPreviousFocus.focus();
+  }
+
+  document.getElementById("close-pin-reset").addEventListener("click", closePinReset);
+  document.getElementById("cancel-pin-reset").addEventListener("click", closePinReset);
+  document.getElementById("pin-reset-modal").addEventListener("click", function (event) {
+    if (event.target === this) closePinReset();
+  });
+  document.getElementById("pin-reset-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!pinResetStudent) return;
+    var pin = document.getElementById("new-student-pin").value;
+    var confirmation = document.getElementById("confirm-student-pin").value;
+    if (!/^\d{4}$/.test(pin)) {
+      showToast("새 PIN을 숫자 4자리로 입력해 주세요.");
+      return;
+    }
+    if (pin !== confirmation) {
+      showToast("두 PIN이 서로 다릅니다.");
+      return;
+    }
+    var student = pinResetStudent;
+    var button = document.getElementById("submit-pin-reset");
+    button.disabled = true;
+    button.textContent = "저장 중…";
+    api("admin/roster/" + encodeURIComponent(student.id) + "/pin", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: pin })
+    }).then(function () {
+      closePinReset();
+      showToast(student.class_number + "반 " + student.student_number + "번 " + student.student_name + " 학생의 PIN을 초기화했습니다.");
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    }).finally(function () {
+      button.disabled = false;
+      button.textContent = "새 PIN 저장";
+    });
+  });
 
 
   function parseTeamAssignments(value) {
@@ -2053,6 +2111,12 @@
     }).finally(function () {
       select.disabled = false;
     });
+  });
+  document.getElementById("roster-list-body").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-reset-pin]");
+    if (!button || button.disabled) return;
+    var student = rosterStudents.find(function (item) { return item.id === button.dataset.resetPin; });
+    if (student) openPinReset(student);
   });
 
   function adminObservationFilters(prefix) {

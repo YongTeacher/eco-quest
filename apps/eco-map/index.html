@@ -417,7 +417,7 @@
         </section>
         <section class="admin-panel roster-table-panel">
           <div class="admin-panel-head roster-table-head"><div><span class="pixel-label">STUDENTS &amp; GROUPS</span><h2>학생 명단과 모둠 배정</h2><p>모둠을 선택하면 즉시 저장됩니다. 미배정 학생은 로그인할 수 없습니다.</p></div><label>학급<select id="roster-class-filter"><option value="">전체</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option></select></label></div>
-          <div class="roster-table-wrap"><table class="roster-table"><thead><tr><th>반</th><th>번호</th><th>이름</th><th>모둠</th><th>가입 상태</th><th>마지막 접속</th></tr></thead><tbody id="roster-list-body"><tr><td colspan="6" class="empty-message">등록된 학생 명단이 없습니다.</td></tr></tbody></table></div>
+          <div class="roster-table-wrap"><table class="roster-table"><thead><tr><th>반</th><th>번호</th><th>이름</th><th>모둠</th><th>가입 상태</th><th>마지막 접속</th><th>PIN 관리</th></tr></thead><tbody id="roster-list-body"><tr><td colspan="7" class="empty-message">등록된 학생 명단이 없습니다.</td></tr></tbody></table></div>
         </section>
       </section>
 
@@ -439,6 +439,18 @@
     <section class="qr-modal-card admin-record-modal-card">
       <header><div><span class="pixel-label">ECO ARCHIVE</span><h2 id="admin-record-title">기록 상세</h2><p id="admin-record-subtitle"></p></div><button id="close-admin-record" class="modal-close" type="button" aria-label="상세 기록 닫기">×</button></header>
       <div id="admin-record-detail" class="admin-record-detail"></div>
+    </section>
+  </div>
+
+  <div id="pin-reset-modal" class="qr-modal" role="dialog" aria-modal="true" aria-labelledby="pin-reset-title" hidden>
+    <section class="qr-modal-card pin-reset-modal-card">
+      <header><div><span class="pixel-label">STUDENT PIN</span><h2 id="pin-reset-title">학생 PIN 초기화</h2><p id="pin-reset-student">선택한 학생의 새 PIN을 설정합니다.</p></div><button id="close-pin-reset" class="modal-close" type="button" aria-label="PIN 초기화 닫기">×</button></header>
+      <form id="pin-reset-form" class="pin-reset-form">
+        <label>새 PIN 4자리<input id="new-student-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" placeholder="숫자 4자리" required /></label>
+        <label>새 PIN 다시 입력<input id="confirm-student-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" placeholder="같은 번호 다시 입력" required /></label>
+        <p>저장하면 이 학생의 기존 로그인만 종료되며, 다음 로그인부터 새 PIN을 사용합니다. 다른 학생에게는 영향을 주지 않습니다.</p>
+        <div class="pin-reset-actions"><button id="cancel-pin-reset" class="secondary-button" type="button">취소</button><button id="submit-pin-reset" class="primary-button" type="submit">새 PIN 저장</button></div>
+      </form>
     </section>
   </div>
 

@@ -103,6 +103,8 @@ async function route(context) {
   if (method === "POST" && path === "admin/roster/import") return importRoster(context, user);
   if (method === "POST" && path === "admin/roster/groups") return updateRosterGroups(context, user);
   if (method === "DELETE" && path === "admin/test-account") return deleteTestAccount(context, user);
+  const rosterPinMatch = path.match(/^admin\/roster\/([0-9a-f-]{36})\/pin$/i);
+  if (method === "PATCH" && rosterPinMatch) return resetStudentPin(context, user, rosterPinMatch[1]);
   const rosterGroupMatch = path.match(/^admin\/roster\/([0-9a-f-]{36})\/group$/i);
   if (method === "PATCH" && rosterGroupMatch) return updateRosterGroup(context, user, rosterGroupMatch[1]);
   if (method === "POST" && path === "admin/sync") return retrySheetSync(context, user);
@@ -1513,6 +1515,41 @@ async function updateRosterGroup(context, user, rosterId) {
   await putSyncEvent(env.ECO_DB, sync);
   context.waitUntil(syncSheetEvent(env, sync));
   return json({ ok: true, student: { id: rosterId, group_number: groupNumber } });
+}
+
+async function resetStudentPin(context, user, rosterId) {
+  const { request, env } = context;
+  requireTeacher(user);
+  requireBindings(env, ["ECO_DB", "ECO_AUTH_PEPPER"]);
+  await ensureRosterSchema(env);
+  const body = await readJson(request);
+  const pin = String(body.pin || "");
+  if (!/^\d{4}$/.test(pin)) return json({ ok: false, error: "새 PIN은 숫자 4자리로 입력해 주세요." }, 400);
+
+  const rosterStudent = await env.ECO_DB.prepare("SELECT * FROM student_roster WHERE id = ?").bind(rosterId).first();
+  if (!rosterStudent) return json({ ok: false, error: "학생 명단을 찾을 수 없습니다." }, 404);
+  const student = await env.ECO_DB.prepare(
+    "SELECT id FROM students WHERE class_number = ? AND student_number = ? AND status = 'active'"
+  ).bind(rosterStudent.class_number, rosterStudent.student_number).first();
+  if (!student) return json({ ok: false, error: "아직 처음 로그인하지 않은 학생은 PIN을 초기화할 필요가 없습니다." }, 409);
+
+  const salt = randomHex(16);
+  const pinHash = await hashPin(pin, salt, env.ECO_AUTH_PEPPER);
+  const now = new Date().toISOString();
+  await env.ECO_DB.batch([
+    env.ECO_DB.prepare("UPDATE students SET pin_salt = ?, pin_hash = ?, updated_at = ? WHERE id = ?")
+      .bind(salt, pinHash, now, student.id),
+    env.ECO_DB.prepare("DELETE FROM sessions WHERE role = 'student' AND student_id = ?").bind(student.id)
+  ]);
+  return json({
+    ok: true,
+    student: {
+      id: rosterStudent.id,
+      class_number: Number(rosterStudent.class_number),
+      student_number: Number(rosterStudent.student_number),
+      student_name: rosterStudent.student_name
+    }
+  });
 }
 
 async function updateRosterGroups(context, user) {
