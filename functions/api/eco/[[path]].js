@@ -8,6 +8,7 @@ const AI_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
 const AI_DAILY_LIMIT = 100;
 const AI_STUDENT_DAILY_LIMIT = 3;
 const CATEGORIES = new Set(["plant", "insect", "bird", "animal", "water", "fungi", "etc"]);
+const IDENTIFICATION_STATUSES = new Set(["확실함", "추정", "교사 확인 필요"]);
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
 let trashSchemaPromise;
@@ -540,6 +541,10 @@ async function createObservation(context, user) {
   const features = text(form.get("features"), 5, 1000, "관찰 특징");
   const reason = text(form.get("identification_reason"), 5, 1500, "동정 근거");
   const source = text(form.get("source"), 2, 500, "참고 자료");
+  const identificationStatus = String(form.get("identification_status") || "추정");
+  if (!IDENTIFICATION_STATUSES.has(identificationStatus)) {
+    return json({ ok: false, error: "이름 확신 상태가 올바르지 않습니다." }, 400);
+  }
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   const photoKey = "observations/" + id + "." + extension;
@@ -578,15 +583,15 @@ async function createObservation(context, user) {
     identification_reason: reason,
     source,
     photo_url: origin + "/api/eco/photos/" + id,
-    identification_status: "학생 동정",
+    identification_status: identificationStatus,
     review_status: "정상"
   };
   const sync = makeSyncEvent("observation.upsert", id, observation);
   try {
     await env.ECO_DB.batch([
       env.ECO_DB.prepare(
-        "INSERT INTO observations (id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_reason, source, photo_key, photo_mime, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(id, user.class_number, user.group_number, user.id, user.student_name, latitude, longitude, placeName, category, speciesName, scientificName, features, reason, source, photoKey, photo.type, now, now),
+        "INSERT INTO observations (id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_reason, source, photo_key, photo_mime, identification_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(id, user.class_number, user.group_number, user.id, user.student_name, latitude, longitude, placeName, category, speciesName, scientificName, features, reason, source, photoKey, photo.type, identificationStatus, now, now),
       syncStatement(env.ECO_DB, sync)
     ]);
   } catch (error) {

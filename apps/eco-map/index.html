@@ -199,7 +199,7 @@
           </div>
 
           <div class="stepper" aria-label="등록 단계">
-            <span class="active"><i>1</i>사진·특징</span><b></b><span><i>2</i>AI 후보</span><b></b><span><i>3</i>조사·선택</span><b></b><span><i>4</i>등록</span>
+            <span class="active"><i>1</i>사진·특징</span><b></b><span><i>2</i>내 이름 작성</span><b></b><span><i>3</i>AI 도움(선택)</span><b></b><span><i>4</i>등록</span>
           </div>
 
           <form id="observation-form" class="observation-grid">
@@ -233,27 +233,45 @@
               <label class="field-label">눈으로 확인한 특징
                 <textarea id="feature-input" rows="5" placeholder="예: 노란색 꽃이고 잎 가장자리가 톱니처럼 생겼어요. 줄기를 자르면 흰 즙이 나왔어요." required></textarea>
               </label>
-              <button id="analyze-button" class="primary-button analyze-button" type="button">사진과 특징 분석하기 <span>✦</span></button>
+              <div class="manual-identification-box">
+                <div><strong>내가 생각한 생물 이름</strong><small>정확하지 않아도 괜찮아요. 나중에 교사가 확인할 수 있습니다.</small></div>
+                <label class="field-label" for="student-species-input">생물 이름
+                  <input id="student-species-input" type="text" maxlength="80" placeholder="예: 왕사마귀, 민들레, 이름 모름" />
+                </label>
+                <label class="check-row unknown-species-row"><input type="checkbox" id="unknown-species-check" /><span>이름을 모르겠어요 · 미확인 상태로 등록할래요</span></label>
+                <button id="direct-identify-button" class="primary-button" type="button">직접 작성한 이름으로 계속 <span>→</span></button>
+              </div>
+              <div class="optional-ai-box">
+                <div><strong>AI 도움은 선택 사항이에요</strong><small>AI가 실패하거나 후보가 틀려도 직접 작성한 이름으로 계속할 수 있어요.</small></div>
+                <button id="analyze-button" class="secondary-button analyze-button" type="button">AI에게 후보 추천받기 <span>✦</span></button>
+              </div>
             </section>
 
             <section id="candidate-section" class="panel candidate-panel" hidden>
-              <div class="panel-title"><span class="number-box">BETA</span><div><h3>조사용 생물 후보</h3><p>현재 후보는 기능 시험용입니다. 후보를 그대로 믿지 말고 직접 검색해 확인하세요.</p></div></div>
+              <div class="panel-title"><span class="number-box">선택</span><div><h3>AI가 제안한 참고 후보</h3><p>AI 후보는 정답이 아닙니다. 사진과 특징을 직접 비교한 뒤 선택하세요.</p></div></div>
               <div id="candidate-list" class="candidate-list"></div>
               <p class="candidate-source-note">대표 사진은 재사용이 허용된 iNaturalist 관찰 사진이며, 각 카드에 촬영자와 라이선스를 표시합니다.</p>
-              <button id="manual-identify" class="secondary-button" type="button">후보에 없어요 · 직접 검색하기</button>
+              <button id="manual-identify" class="secondary-button" type="button">후보에 없어요 · 직접 입력으로 돌아가기</button>
             </section>
 
             <section id="research-section" class="panel research-panel" hidden>
               <div class="panel-title"><span class="number-box">03</span><div><h3>조사 결과 작성</h3><p>선택한 생물의 근거를 남기면 자동 등록됩니다.</p></div></div>
               <div id="selected-species" class="selected-species"></div>
+              <label class="field-label">이름을 얼마나 확신하나요?
+                <select id="identification-status-select">
+                  <option value="확실함">확실함 · 특징을 충분히 비교했어요</option>
+                  <option value="추정" selected>추정 · 비슷하지만 확실하지 않아요</option>
+                  <option value="교사 확인 필요">교사 확인 필요 · 이름을 모르거나 확인이 필요해요</option>
+                </select>
+              </label>
               <label class="field-label">이 생물이라고 판단한 근거 2가지
                 <textarea id="reason-input" rows="4" placeholder="사진에서 확인한 특징과 다른 후보와 구별되는 점을 적어주세요."></textarea>
               </label>
-              <label class="field-label">참고 자료
-                <input id="source-input" type="text" placeholder="https:// 또는 참고한 책 이름" />
+              <label class="field-label">참고 자료 <small>(선택)</small>
+                <input id="source-input" type="text" placeholder="검색한 사이트나 책 이름 · 없으면 비워도 됩니다" />
               </label>
-              <label class="check-row"><input type="checkbox" id="research-check" /><span>후보의 특징을 직접 비교하고 조사했습니다.</span></label>
-              <button id="finalize-button" class="primary-button" type="button">학생 동정 완료로 등록 <span>→</span></button>
+              <label class="check-row"><input type="checkbox" id="research-check" /><span>사진과 관찰 특징을 확인했으며, 이름이 추정일 수 있음을 이해했습니다.</span></label>
+              <button id="finalize-button" class="primary-button" type="button">관찰 기록 등록하기 <span>→</span></button>
             </section>
           </form>
         </section>

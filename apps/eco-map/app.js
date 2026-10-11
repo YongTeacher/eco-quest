@@ -1263,22 +1263,69 @@
     });
   }
 
-  /* Workers AI photo identification */
-  document.getElementById("analyze-button").addEventListener("click", function () {
+  function observationBasicsReady(actionName) {
     var category = document.getElementById("category-select").value;
     var features = document.getElementById("feature-input").value.trim();
     if (!photos.length) {
-      showToast("분석할 생물 사진을 한 장 이상 선택해 주세요.");
-      return;
+      showToast((actionName || "등록") + "할 생물 사진을 한 장 이상 선택해 주세요.");
+      return false;
     }
     if (!selectedLocation) {
       showToast("지도에서 생물을 발견한 위치를 먼저 선택해 주세요.");
+      return false;
+    }
+    if (!category || features.length < 5) {
+      showToast("생물의 큰 분류와 눈으로 확인한 특징을 5자 이상 입력해 주세요.");
+      return false;
+    }
+    return true;
+  }
+
+  function unidentifiedSpeciesName(category) {
+    return ({
+      plant: "미확인 식물",
+      insect: "미확인 곤충",
+      bird: "미확인 조류",
+      animal: "미확인 동물",
+      water: "미확인 수생·양서·파충류",
+      fungi: "미확인 균류",
+      etc: "미확인 생물"
+    })[category] || "미확인 생물";
+  }
+
+  document.getElementById("unknown-species-check").addEventListener("change", function () {
+    var nameInput = document.getElementById("student-species-input");
+    nameInput.disabled = this.checked;
+    if (this.checked) {
+      nameInput.value = "";
+      document.getElementById("identification-status-select").value = "교사 확인 필요";
+    } else {
+      nameInput.focus();
+    }
+  });
+
+  document.getElementById("direct-identify-button").addEventListener("click", function () {
+    if (!observationBasicsReady("등록")) return;
+    var unknown = document.getElementById("unknown-species-check").checked;
+    var category = document.getElementById("category-select").value;
+    var name = document.getElementById("student-species-input").value.trim();
+    if (!unknown && !name) {
+      showToast("생물 이름을 적거나 ‘이름을 모르겠어요’를 선택해 주세요.");
+      document.getElementById("student-species-input").focus();
       return;
     }
-    if (!category || !features) {
-      showToast("생물의 분류와 관찰한 특징을 입력해 주세요.");
-      return;
-    }
+    selectSpecies(
+      unknown ? unidentifiedSpeciesName(category) : name,
+      "",
+      unknown ? "교사 확인 필요" : document.getElementById("identification-status-select").value
+    );
+  });
+
+  /* Workers AI photo identification (optional helper) */
+  document.getElementById("analyze-button").addEventListener("click", function () {
+    var category = document.getElementById("category-select").value;
+    var features = document.getElementById("feature-input").value.trim();
+    if (!observationBasicsReady("분석")) return;
     var button = this;
     button.disabled = true;
     button.innerHTML = "사진과 특징을 비교하는 중…";
@@ -1295,13 +1342,13 @@
       showToast(result.note + (remaining === null ? "" : " · 오늘 개인 분석 " + remaining + "회 남음"));
       document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }).catch(function (error) {
-      showToast(error.message);
+      showToast("AI 도움을 받을 수 없어요. 직접 작성한 이름으로 계속 등록할 수 있습니다.");
       document.getElementById("candidate-section").hidden = false;
-      renderCandidates([], "AI 사진 분석을 완료하지 못했습니다.", error.message);
+      renderCandidates([], "AI 도움을 지금 사용할 수 없어요.", "오류와 관계없이 위의 직접 입력란에서 이름을 적거나 미확인 상태로 등록할 수 있습니다.");
       document.getElementById("candidate-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }).finally(function () {
       button.disabled = false;
-      button.innerHTML = "다시 분석하기 <span>✦</span>";
+      button.innerHTML = "AI 후보 다시 추천받기 <span>✦</span>";
     });
   });
 
@@ -1406,7 +1453,7 @@
     var card = event.target.closest(".candidate-card");
     if (!card) return;
     document.querySelectorAll(".candidate-card").forEach(function (item) { item.classList.toggle("selected", item === card); });
-    selectSpecies(card.dataset.name, card.dataset.scientific);
+    selectSpecies(card.dataset.name, card.dataset.scientific, "추정");
   });
 
   document.getElementById("candidate-list").addEventListener("keydown", function (event) {
@@ -1419,24 +1466,35 @@
   });
 
   document.getElementById("manual-identify").addEventListener("click", function () {
-    var name = window.prompt("조사한 생물 이름을 입력하세요.", "");
-    if (!name) return;
-    selectSpecies(name, "학명 데이터베이스 확인 예정");
+    document.getElementById("student-species-input").focus();
+    document.querySelector(".manual-identification-box").scrollIntoView({ behavior: "smooth", block: "center" });
   });
 
-  function selectSpecies(name, scientific) {
-    selectedSpecies = { name: name, scientific: scientific };
-    document.getElementById("selected-species").innerHTML = "<b>최종 후보 · " + escapeHtml(name) + "</b><span>" + escapeHtml(scientific) + "</span>";
+  function renderSelectedSpecies() {
+    if (!selectedSpecies) return;
+    document.getElementById("selected-species").innerHTML = "<b>등록할 이름 · " + escapeHtml(selectedSpecies.name) + "</b><span>" + escapeHtml(selectedSpecies.scientific || "학명 미기록") + " · " + escapeHtml(selectedSpecies.status) + "</span>";
+  }
+
+  function selectSpecies(name, scientific, status) {
+    selectedSpecies = { name: name, scientific: scientific || "", status: status || "추정" };
+    document.getElementById("identification-status-select").value = selectedSpecies.status;
+    renderSelectedSpecies();
     document.getElementById("research-section").hidden = false;
     document.getElementById("research-section").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  document.getElementById("identification-status-select").addEventListener("change", function () {
+    if (!selectedSpecies) return;
+    selectedSpecies.status = this.value;
+    renderSelectedSpecies();
+  });
 
   document.getElementById("finalize-button").addEventListener("click", function () {
     var reason = document.getElementById("reason-input").value.trim();
     var source = document.getElementById("source-input").value.trim();
     var checked = document.getElementById("research-check").checked;
-    if (!selectedSpecies || !reason || !source || !checked) {
-      showToast("동정 근거, 참고 자료와 조사 확인을 모두 작성해 주세요.");
+    if (!selectedSpecies || reason.length < 5 || !checked) {
+      showToast("관찰 근거를 5자 이상 적고 확인란을 선택해 주세요.");
       return;
     }
     if (!photos.length || !selectedLocation) {
@@ -1455,7 +1513,8 @@
     form.append("scientific_name", selectedSpecies.scientific);
     form.append("features", document.getElementById("feature-input").value.trim());
     form.append("identification_reason", reason);
-    form.append("source", source);
+    form.append("source", source || "현장 관찰 기록");
+    form.append("identification_status", selectedSpecies.status);
     button.disabled = true;
     button.textContent = "사진과 기록을 저장하는 중…";
     api("observations", { method: "POST", body: form }).then(function (result) {
@@ -1469,7 +1528,7 @@
       showToast(error.message);
     }).finally(function () {
       button.disabled = false;
-      button.innerHTML = '학생 동정 완료로 등록 <span>→</span>';
+      button.innerHTML = '관찰 기록 등록하기 <span>→</span>';
     });
   });
 
@@ -1479,6 +1538,7 @@
     selectedSpecies = null;
     selectedLocation = null;
     pendingLocation = null;
+    document.getElementById("student-species-input").disabled = false;
     renderPhotos();
     document.getElementById("candidate-section").hidden = true;
     document.getElementById("research-section").hidden = true;
