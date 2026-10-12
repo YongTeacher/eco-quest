@@ -47,6 +47,7 @@
   var adminMapClusterer;
   var adminMapMarkers = [];
   var adminPhotoMapRenderer;
+  var adminMapGroupCenter = null;
   var adminRecordPreviousFocus;
   var currentReflection;
   var pinResetStudent;
@@ -131,6 +132,7 @@
       settings: ["수업 설정", "학생 로그인 코드와 수업 준비 정보를 관리합니다."]
     };
     var selected = labels[name] ? name : "dashboard";
+    if (selected !== "map" && document.getElementById("admin-map-layout").classList.contains("admin-map-expanded")) setAdminMapExpanded(false);
     document.querySelectorAll(".teacher-view").forEach(function (view) {
       view.hidden = view.id !== "teacher-view-" + selected;
     });
@@ -316,7 +318,19 @@
     loading.innerHTML = '<span class="compass-icon">!</span><b>카카오맵을 불러오지 못했습니다</b><small>' + escapeHtml(message) + '<br>위의 “카카오맵에서 열기”로 학교 위치를 확인할 수 있습니다.</small>';
   }
 
+  function setStudentMapInspectorOpen(open) {
+    var layout = document.getElementById("map-layout");
+    layout.classList.toggle("map-inspector-open", open);
+    if (!layout.classList.contains("map-expanded") || !kakaoMap) return;
+    window.setTimeout(function () {
+      var center = kakaoMap.getCenter();
+      kakaoMap.relayout();
+      kakaoMap.setCenter(center);
+    }, 0);
+  }
+
   function renderSchoolInspector() {
+    setStudentMapInspectorOpen(true);
     document.getElementById("map-inspector").innerHTML =
       '<div class="inspector-content">' +
         '<div class="place-visual"><span>⌂</span></div>' +
@@ -428,6 +442,7 @@
     var filterText = currentFilter === "all" ? "전체 분류" : document.querySelector('[data-filter="' + currentFilter + '"]').textContent.trim();
     document.getElementById("map-summary").textContent = classText + " · " + filterText + " · 관찰 " + visibleCount + "건";
     document.getElementById("map-total-count").textContent = visibleCount;
+    setStudentMapInspectorOpen(false);
     document.getElementById("map-inspector").innerHTML = '<div class="inspector-placeholder"><span class="compass-icon">⌖</span><h3>핀을 선택해 보세요</h3><p>현재 필터에 맞는 장소의 생물 기록을 확인할 수 있습니다.</p></div>';
   }
 
@@ -449,6 +464,7 @@
   function renderObservationInspector(observation) {
     var existingGuide = guides.find(function (guide) { return guide.observation_id === observation.id; });
     var guideButtonLabel = existingGuide ? "내 생물도감 수정하기" : "이 생물로 개인 도감 만들기";
+    setStudentMapInspectorOpen(true);
     document.getElementById("map-inspector").innerHTML =
       '<div class="inspector-content">' +
         '<img class="observation-photo" src="' + escapeHtml(observation.photo_url) + '" alt="' + escapeHtml(observation.species_name) + ' 대표 사진" />' +
@@ -464,6 +480,7 @@
 
   function renderObservationGroupInspector(groupObservations, center) {
     var inspector = document.getElementById("map-inspector");
+    setStudentMapInspectorOpen(true);
     var zoomButton = kakaoMap && kakaoMap.getLevel() > 1
       ? '<button class="secondary-button cluster-zoom-button" type="button" data-cluster-zoom="true" data-lat="' + escapeHtml(center.getLat()) + '" data-lng="' + escapeHtml(center.getLng()) + '">＋ 이 구역 더 확대하기</button>'
       : '';
@@ -1113,6 +1130,7 @@
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
     else if (!document.getElementById("observation-edit-modal").hidden) closeObservationEditor();
     else if (document.getElementById("map-layout").classList.contains("map-expanded")) setStudentMapExpanded(false);
+    else if (document.getElementById("admin-map-layout").classList.contains("admin-map-expanded")) setAdminMapExpanded(false);
   });
   var photoViewerPreviousFocus = null;
   function closePhotoViewer() {
@@ -2219,7 +2237,7 @@
         adminMap.addControl(new window.kakao.maps.MapTypeControl(), window.kakao.maps.ControlPosition.TOPRIGHT);
         adminMap.addControl(new window.kakao.maps.ZoomControl(), window.kakao.maps.ControlPosition.RIGHT);
         adminMapClusterer = new window.kakao.maps.MarkerClusterer({ map: adminMap, averageCenter: true, minLevel: 1 });
-        adminPhotoMapRenderer = createPhotoMapRenderer(adminMap, adminMapClusterer, openAdminObservation);
+        adminPhotoMapRenderer = createPhotoMapRenderer(adminMap, adminMapClusterer, openAdminObservation, renderAdminMapGroup);
       }
       adminMap.relayout();
       renderAdminMap();
@@ -2228,12 +2246,8 @@
 
   function renderAdminMap() {
     var filtered = adminObservationFilters("admin-map");
-    var mapList = document.getElementById("admin-map-list");
-    if (!mapList) return;
-    document.getElementById("admin-map-count").textContent = filtered.length + "건";
-    mapList.innerHTML = filtered.length ? filtered.map(function (item) {
-      return adminObservationCard(item, adminObservations.indexOf(item), true);
-    }).join("") : '<p class="empty-message">조건에 맞는 관찰이 없습니다.</p>';
+    adminMapGroupCenter = null;
+    renderAdminMapSidebar(filtered, false);
     if (!adminMap) return;
     if (adminPhotoMapRenderer) adminPhotoMapRenderer.setItems([]);
     if (adminMapClusterer) adminMapClusterer.clear();
@@ -2257,6 +2271,38 @@
       adminMap.setCenter(new window.kakao.maps.LatLng(schoolPosition.lat, schoolPosition.lng));
       adminMap.setLevel(4);
     }
+  }
+
+  function renderAdminMapSidebar(items, grouped) {
+    var mapList = document.getElementById("admin-map-list");
+    if (!mapList) return;
+    document.getElementById("admin-map-count").textContent = (grouped ? "묶음 " : "") + items.length + "건";
+    document.getElementById("admin-map-group-tools").hidden = !grouped;
+    if (grouped) document.getElementById("admin-map-group-summary").textContent = "현재 지도에서 가까운 위치의 관찰 " + items.length + "건입니다.";
+    mapList.innerHTML = items.length ? items.map(function (item) {
+      return adminObservationCard(item, adminObservations.indexOf(item), true);
+    }).join("") : '<p class="empty-message">조건에 맞는 관찰이 없습니다.</p>';
+    mapList.scrollTop = 0;
+  }
+
+  function renderAdminMapGroup(groupObservations, center) {
+    adminMapGroupCenter = { lat: center.getLat(), lng: center.getLng() };
+    renderAdminMapSidebar(groupObservations, true);
+  }
+
+  function setAdminMapExpanded(expanded) {
+    var layout = document.getElementById("admin-map-layout");
+    var button = document.getElementById("admin-map-fullscreen-button");
+    layout.classList.toggle("admin-map-expanded", expanded);
+    document.body.classList.toggle("map-fullscreen-open", expanded);
+    button.setAttribute("aria-pressed", expanded ? "true" : "false");
+    button.textContent = expanded ? "✕ 닫기" : "⛶ 전체화면";
+    window.setTimeout(function () {
+      if (!adminMap) return;
+      var center = adminMap.getCenter();
+      adminMap.relayout();
+      adminMap.setCenter(center);
+    }, 0);
   }
 
   function openAdminRecord(title, subtitle, html) {
@@ -2385,6 +2431,7 @@
     var layout = document.getElementById("map-layout");
     var button = document.getElementById("map-fullscreen-button");
     layout.classList.toggle("map-expanded", expanded);
+    if (expanded && document.getElementById("map-inspector").querySelector(".inspector-placeholder")) layout.classList.remove("map-inspector-open");
     document.body.classList.toggle("map-fullscreen-open", expanded);
     button.setAttribute("aria-pressed", expanded ? "true" : "false");
     button.textContent = expanded ? "✕ 전체화면 닫기" : "⛶ 전체화면";
@@ -2432,6 +2479,19 @@
   document.getElementById("admin-observation-category").addEventListener("change", renderAdminObservationList);
   document.getElementById("admin-map-class").addEventListener("change", renderAdminMap);
   document.getElementById("admin-map-category").addEventListener("change", renderAdminMap);
+  document.getElementById("admin-map-fullscreen-button").addEventListener("click", function () {
+    setAdminMapExpanded(!document.getElementById("admin-map-layout").classList.contains("admin-map-expanded"));
+  });
+  document.getElementById("admin-map-show-all").addEventListener("click", function () {
+    adminMapGroupCenter = null;
+    renderAdminMapSidebar(adminObservationFilters("admin-map"), false);
+  });
+  document.getElementById("admin-map-group-zoom").addEventListener("click", function () {
+    if (!adminMap || !adminMapGroupCenter || adminMap.getLevel() <= 1) return;
+    adminMap.setLevel(adminMap.getLevel() - 1, {
+      anchor: new window.kakao.maps.LatLng(adminMapGroupCenter.lat, adminMapGroupCenter.lng)
+    });
+  });
   document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
   document.getElementById("admin-reflection-class").addEventListener("change", renderAdminReflections);
   document.getElementById("admin-reflection-status").addEventListener("change", renderAdminReflections);
