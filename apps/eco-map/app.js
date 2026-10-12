@@ -42,6 +42,7 @@
   var adminGuides = [];
   var adminTrash = [];
   var adminReflections = [];
+  var adminIdentificationProposals = [];
   var adminMap;
   var adminMapClusterer;
   var adminMapMarkers = [];
@@ -145,6 +146,7 @@
     if (selected === "guides") loadAdminGuides();
     if (selected === "reflections") loadAdminReflections();
     if (selected === "settings") loadClassCodeSetting();
+    if (selected === "dashboard") loadIdentificationProposals();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -864,6 +866,12 @@
       '<img src="' + escapeHtml(observation.photo_url) + '" alt="' + escapeHtml(observation.species_name) + ' 대표 사진" />' +
       '<div><span class="pixel-label">' + escapeHtml(categoryLabel(observation.category)) + '</span><h3>' + escapeHtml(observation.species_name) + '</h3><p>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</p><small>' + escapeHtml(observation.place_name) + '</small></div>';
     document.getElementById("guide-habitat").value = existingGuide ? existingGuide.habitat : "";
+    document.getElementById("guide-species-name").value = existingGuide ? existingGuide.species_name : observation.species_name;
+    document.getElementById("guide-scientific-name").value = existingGuide ? existingGuide.scientific_name || "" : observation.scientific_name || "";
+    document.getElementById("guide-propose-correction").checked = false;
+    document.getElementById("guide-correction-reason-wrap").hidden = true;
+    document.getElementById("guide-correction-reason").required = false;
+    document.getElementById("guide-correction-reason").value = "";
     document.getElementById("guide-key-features").value = existingGuide ? existingGuide.key_features : observation.features || "";
     document.getElementById("guide-ecological-role").value = existingGuide ? existingGuide.ecological_role : "";
     document.getElementById("guide-report").value = existingGuide ? existingGuide.report : "";
@@ -871,7 +879,7 @@
     document.getElementById("save-guide").textContent = existingGuide ? "수정 내용 저장하기" : "생물도감 완성하기";
     document.getElementById("guide-editor-modal").hidden = false;
     document.body.classList.add("modal-open");
-    document.getElementById("guide-habitat").focus();
+    document.getElementById("guide-species-name").focus();
   }
 
   function closeGuideEditor() {
@@ -894,6 +902,13 @@
     if (event.target === this) closeGuideEditor();
   });
 
+  document.getElementById("guide-propose-correction").addEventListener("change", function () {
+    var reason = document.getElementById("guide-correction-reason");
+    document.getElementById("guide-correction-reason-wrap").hidden = !this.checked;
+    reason.required = this.checked;
+    if (this.checked) reason.focus();
+  });
+
   document.getElementById("guide-form").addEventListener("submit", function (event) {
     event.preventDefault();
     if (!selectedGuideObservation) return;
@@ -906,6 +921,10 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         observation_id: observationId,
+        species_name: document.getElementById("guide-species-name").value.trim(),
+        scientific_name: document.getElementById("guide-scientific-name").value.trim(),
+        propose_correction: document.getElementById("guide-propose-correction").checked,
+        correction_reason: document.getElementById("guide-correction-reason").value.trim(),
         habitat: document.getElementById("guide-habitat").value.trim(),
         key_features: document.getElementById("guide-key-features").value.trim(),
         ecological_role: document.getElementById("guide-ecological-role").value.trim(),
@@ -921,7 +940,7 @@
       renderGuides();
       renderStudentSummary();
       setView("dex");
-      showToast("개인 생물도감과 Google Sheets 전송 대기열에 저장했습니다.");
+      showToast(result.proposal_submitted ? "개인 도감을 저장하고 공동 기록 이름 수정 제안을 보냈습니다." : "개인 생물도감과 Google Sheets 전송 대기열에 저장했습니다.");
     }).catch(function (error) {
       showToast(error.message);
     }).finally(function () {
@@ -2328,6 +2347,30 @@
       '<dl><dt>1. 인상 깊었던 생물</dt><dd>' + escapeHtml(item.memorable_species || "미작성") + '</dd><dt>2. 역할과 기여</dt><dd>' + escapeHtml(item.contribution || "미작성") + '</dd><dt>3. 문제 해결</dt><dd>' + escapeHtml(item.problem_solving || "미작성") + '</dd><dt>4. 생태 지식</dt><dd>' + escapeHtml(item.ecological_learning || "미작성") + '</dd><dt>5. 생각의 변화</dt><dd>' + escapeHtml(item.perspective_change || "미작성") + '</dd><dt>6. 후속 탐구 질문</dt><dd>' + escapeHtml(item.further_question || "미작성") + '</dd><dt>7. 자유 소감</dt><dd>' + escapeHtml(item.free_reflection || "미작성") + '</dd><dt>최종 제출일</dt><dd>' + escapeHtml(item.submitted_at ? formatDate(item.submitted_at) : "미제출") + '</dd></dl>');
   }
 
+  function loadIdentificationProposals() {
+    api("admin/identification-proposals").then(function (result) {
+      adminIdentificationProposals = result.proposals || [];
+      renderIdentificationProposals();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      showToast(error.message);
+    });
+  }
+
+  function renderIdentificationProposals() {
+    var list = document.querySelector(".exception-list");
+    var badge = document.querySelector(".exception-panel .count-badge");
+    if (!list || !badge) return;
+    badge.textContent = adminIdentificationProposals.length;
+    list.innerHTML = adminIdentificationProposals.length ? adminIdentificationProposals.map(function (item) {
+      return '<article data-proposal-id="' + escapeHtml(item.id) + '">' +
+        '<button class="proposal-photo" type="button" data-view-photo="' + escapeHtml(item.photo_url) + '" data-photo-name="' + escapeHtml(item.proposed_name) + '" aria-label="관찰 사진 크게 보기"><img src="' + escapeHtml(item.photo_url) + '&thumb=1" alt="" /></button>' +
+        '<div class="proposal-copy"><b>' + escapeHtml(item.current_name) + ' → ' + escapeHtml(item.proposed_name) + '</b>' +
+        '<p>' + escapeHtml(item.class_number + '반 ' + item.student_number + '번 ' + item.student_name) + ' · ' + escapeHtml(item.evidence) + '</p></div>' +
+        '<div class="proposal-actions"><button type="button" data-proposal-action="approve">승인</button><button class="reject" type="button" data-proposal-action="reject">반려</button></div></article>';
+    }).join("") : '<p class="empty-message">확인이 필요한 이름 수정 제안이 없습니다.</p>';
+  }
+
   document.getElementById("admin-observation-class").addEventListener("change", renderAdminObservationList);
   document.getElementById("admin-observation-category").addEventListener("change", renderAdminObservationList);
   document.getElementById("admin-map-class").addEventListener("change", renderAdminMap);
@@ -2355,9 +2398,36 @@
     var guideCard = event.target.closest("[data-admin-guide]");
     var reflectionButton = event.target.closest("[data-admin-reflection]");
     var restoreButton = event.target.closest("[data-restore-observation]");
+    var proposalButton = event.target.closest("[data-proposal-action]");
     if (observationCard && adminObservations[Number(observationCard.dataset.adminObservation)]) openAdminObservation(adminObservations[Number(observationCard.dataset.adminObservation)]);
     if (guideCard && adminGuides[Number(guideCard.dataset.adminGuide)]) openAdminGuide(adminGuides[Number(guideCard.dataset.adminGuide)]);
     if (reflectionButton && adminReflections[Number(reflectionButton.dataset.adminReflection)]) openAdminReflection(adminReflections[Number(reflectionButton.dataset.adminReflection)]);
+    if (proposalButton && !proposalButton.disabled) {
+      var proposalCard = proposalButton.closest("[data-proposal-id]");
+      var action = proposalButton.dataset.proposalAction;
+      var teacherNote = "";
+      if (action === "reject") {
+        var promptedNote = window.prompt("학생에게 남길 반려 사유를 입력해 주세요. (선택)", "");
+        if (promptedNote === null) return;
+        teacherNote = promptedNote;
+      } else if (!window.confirm("이 이름으로 공동 생태지도 기록을 수정할까요?")) {
+        return;
+      }
+      proposalCard.querySelectorAll("button").forEach(function (button) { button.disabled = true; });
+      api("admin/identification-proposals/" + encodeURIComponent(proposalCard.dataset.proposalId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: action, teacher_note: teacherNote })
+      }).then(function () {
+        adminIdentificationProposals = adminIdentificationProposals.filter(function (item) { return item.id !== proposalCard.dataset.proposalId; });
+        renderIdentificationProposals();
+        loadAdminOverview();
+        showToast(action === "approve" ? "공동 생태지도의 생물 이름을 수정했습니다." : "이름 수정 제안을 반려했습니다.");
+      }).catch(function (error) {
+        showToast(error.message);
+        proposalCard.querySelectorAll("button").forEach(function (button) { button.disabled = false; });
+      });
+    }
     if (restoreButton && !restoreButton.disabled) {
       restoreButton.disabled = true;
       restoreButton.textContent = "복구하는 중…";

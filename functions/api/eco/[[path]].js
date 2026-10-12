@@ -41,6 +41,7 @@ let reflectionSchemaPromise;
 let settingsSchemaPromise;
 let trashSchemaPromise;
 let aiIdentificationSchemaPromise;
+let identificationReviewSchemaPromise;
 const PHOTO_TYPES = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -95,6 +96,9 @@ async function route(context) {
   if (method === "POST" && path === "reflection") return saveReflection(context, user);
   if (method === "GET" && path === "admin/overview") return adminOverview(context, user);
   if (method === "GET" && path === "admin/guides") return listAdminGuides(context, user);
+  if (method === "GET" && path === "admin/identification-proposals") return listIdentificationProposals(context, user);
+  const identificationProposalMatch = path.match(/^admin\/identification-proposals\/([0-9a-f-]{36})$/i);
+  if (method === "PATCH" && identificationProposalMatch) return resolveIdentificationProposal(context, user, identificationProposalMatch[1]);
   if (method === "GET" && path === "admin/reflections") return listAdminReflections(context, user);
   if (method === "PATCH" && path === "admin/reflections/settings") return updateReflectionSettings(context, user);
   if (method === "GET" && path === "admin/class-code") return getClassCodeSetting(context, user);
@@ -151,7 +155,7 @@ async function studentLogin(context) {
     rosterStudent = await env.ECO_DB.prepare(
       "SELECT * FROM student_roster WHERE class_number = ? AND student_number = ?"
     ).bind(classNumber, studentNumber).first();
-    if (!rosterStudent || rosterStudent.status !== "active" || rosterStudent.normalized_name !== normalizeStudentName(studentName)) {
+    if (!rosterStudent || rosterStudent.status !== "active" || normalizeStudentLoginName(rosterStudent.student_name) !== normalizeStudentLoginName(studentName)) {
       return json({ ok: false, error: "사전 등록된 학생 명단과 정보가 일치하지 않습니다. 반·번호·이름·모둠을 다시 확인해 주세요." }, 403);
     }
     if (rosterStudent.group_number === null || rosterStudent.group_number === undefined) {
@@ -731,8 +735,9 @@ async function getPhoto({ request, env }, id) {
 
 async function listGuides({ request, env }, user) {
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await ensureIdentificationReviewSchema(env);
   const result = await env.ECO_DB.prepare(
-    "SELECT g.*, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
+    "SELECT g.*, COALESCE(NULLIF(g.identified_name, ''), o.species_name) AS species_name, COALESCE(NULLIF(g.identified_scientific_name, ''), o.scientific_name) AS scientific_name, o.species_name AS observation_species_name, o.scientific_name AS observation_scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
   ).bind(user.id).all();
   const origin = new URL(request.url).origin;
   return json({ ok: true, guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) }; }), guide_limit: user.guide_limit });
@@ -741,6 +746,7 @@ async function listGuides({ request, env }, user) {
 async function createGuide(context, user) {
   const { request, env } = context;
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await ensureIdentificationReviewSchema(env);
   const body = await readJson(request);
   const observationId = String(body.observation_id || "");
   const observation = await env.ECO_DB.prepare("SELECT * FROM observations WHERE id = ?").bind(observationId).first();
@@ -752,6 +758,16 @@ async function createGuide(context, user) {
   }
   const now = new Date().toISOString();
   const id = existing ? existing.id : crypto.randomUUID();
+  const identifiedName = text(body.species_name || observation.species_name, 1, 80, "생물 이름");
+  const identifiedScientificName = optionalText(body.scientific_name, 120, "학명");
+  const changedIdentification = !sameIdentification(
+    identifiedName, identifiedScientificName, observation.species_name, observation.scientific_name
+  );
+  const proposeCorrection = body.propose_correction === true && changedIdentification;
+  const correctionReason = proposeCorrection ? text(body.correction_reason, 5, 1000, "이름 수정 근거") : "";
+  const pendingProposal = proposeCorrection ? await env.ECO_DB.prepare(
+    "SELECT id, created_at FROM identification_proposals WHERE observation_id = ? AND student_id = ? AND status = 'pending'"
+  ).bind(observationId, user.id).first() : null;
   const data = {
     guide_id: id,
     created_at: now,
@@ -761,8 +777,8 @@ async function createGuide(context, user) {
     student_number: user.student_number,
     student_name: user.student_name,
     observation_id: observationId,
-    species_name: observation.species_name,
-    scientific_name: observation.scientific_name,
+    species_name: identifiedName,
+    scientific_name: identifiedScientificName,
     category: observation.category,
     place_name: observation.place_name,
     latitude: observation.latitude,
@@ -778,14 +794,28 @@ async function createGuide(context, user) {
     status: "완료"
   };
   const sync = makeSyncEvent("guide.upsert", id, data);
-  await env.ECO_DB.batch([
+  const statements = [
     env.ECO_DB.prepare(
-      "INSERT INTO field_guides (id, student_id, observation_id, habitat, key_features, ecological_role, report, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '완료', ?, ?) ON CONFLICT(student_id, observation_id) DO UPDATE SET habitat = excluded.habitat, key_features = excluded.key_features, ecological_role = excluded.ecological_role, report = excluded.report, source = excluded.source, status = '완료', updated_at = excluded.updated_at"
-    ).bind(id, user.id, observationId, data.habitat, data.key_features, data.ecological_role, data.report, data.source, now, now),
+      "INSERT INTO field_guides (id, student_id, observation_id, habitat, key_features, ecological_role, report, source, identified_name, identified_scientific_name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '완료', ?, ?) ON CONFLICT(student_id, observation_id) DO UPDATE SET habitat = excluded.habitat, key_features = excluded.key_features, ecological_role = excluded.ecological_role, report = excluded.report, source = excluded.source, identified_name = excluded.identified_name, identified_scientific_name = excluded.identified_scientific_name, status = '완료', updated_at = excluded.updated_at"
+    ).bind(id, user.id, observationId, data.habitat, data.key_features, data.ecological_role, data.report, data.source, identifiedName, identifiedScientificName, now, now),
     syncStatement(env.ECO_DB, sync)
-  ]);
+  ];
+  let proposalId = null;
+  if (proposeCorrection) {
+    proposalId = pendingProposal ? pendingProposal.id : crypto.randomUUID();
+    if (pendingProposal) {
+      statements.push(env.ECO_DB.prepare(
+        "UPDATE identification_proposals SET proposed_name = ?, proposed_scientific_name = ?, evidence = ?, source = ?, updated_at = ? WHERE id = ? AND status = 'pending'"
+      ).bind(identifiedName, identifiedScientificName, correctionReason, data.source, now, proposalId));
+    } else {
+      statements.push(env.ECO_DB.prepare(
+        "INSERT INTO identification_proposals (id, observation_id, student_id, proposed_name, proposed_scientific_name, evidence, source, status, teacher_note, created_at, updated_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?, NULL)"
+      ).bind(proposalId, observationId, user.id, identifiedName, identifiedScientificName, correctionReason, data.source, now, now));
+    }
+  }
+  await env.ECO_DB.batch(statements);
   context.waitUntil(syncSheetEvent(env, sync));
-  return json({ ok: true, guide: data }, existing ? 200 : 201);
+  return json({ ok: true, guide: data, proposal_submitted: proposeCorrection, proposal_id: proposalId }, existing ? 200 : 201);
 }
 
 async function ensureRosterSchema(env) {
@@ -880,7 +910,7 @@ async function updateObservation(context, user, id) {
       guide_id: guide.id, created_at: guide.created_at, updated_at: guide.updated_at,
       student_id: guide.student_id, class_number: guide.class_number,
       student_number: guide.student_number, student_name: guide.student_name,
-      observation_id: id, species_name: speciesName, scientific_name: scientificName,
+      observation_id: id, species_name: guide.identified_name || speciesName, scientific_name: guide.identified_scientific_name || scientificName,
       category, place_name: placeName, latitude, longitude,
       habitat: guide.habitat, key_features: guide.key_features,
       ecological_role: guide.ecological_role, report: guide.report,
@@ -1010,6 +1040,7 @@ async function restoreAdminObservation(context, user, id) {
   requireTeacher(user);
   requireBindings(env, ["ECO_PHOTOS"]);
   await ensureTrashSchema(env);
+  await ensureIdentificationReviewSchema(env);
   const trash = await env.ECO_DB.prepare("SELECT * FROM observation_trash WHERE id = ?").bind(id).first();
   if (!trash) return json({ ok: false, error: "휴지통에서 관찰 기록을 찾을 수 없습니다." }, 404);
   if (trash.purge_after <= new Date().toISOString()) return json({ ok: false, error: "30일 보관 기간이 지나 복구할 수 없습니다." }, 410);
@@ -1037,7 +1068,8 @@ async function restoreAdminObservation(context, user, id) {
     return makeSyncEvent("guide.upsert", guide.id, {
       ...guide, guide_id: guide.id, class_number: student.class_number,
       student_number: student.student_number, student_name: student.student_name,
-      species_name: observation.species_name, scientific_name: observation.scientific_name,
+      species_name: guide.identified_name || observation.species_name,
+      scientific_name: guide.identified_scientific_name || observation.scientific_name,
       category: observation.category, place_name: observation.place_name,
       latitude: observation.latitude, longitude: observation.longitude, photo_url: photoUrl
     });
@@ -1062,7 +1094,7 @@ async function restoreAdminObservation(context, user, id) {
   }
 
   const observationColumns = "id class_number group_number student_id student_name latitude longitude place_name category species_name scientific_name features identification_reason source photo_key photo_mime identification_status review_status created_at updated_at".split(" ");
-  const guideColumns = "id student_id observation_id habitat key_features ecological_role report source status created_at updated_at".split(" ");
+  const guideColumns = "id student_id observation_id habitat key_features ecological_role report source identified_name identified_scientific_name status created_at updated_at".split(" ");
   const reviewColumns = "id review_type target_id class_number owner_label message status teacher_name resolved_at created_at updated_at".split(" ");
   const restoredIds = [id].concat(guides.map(function (guide) { return guide.id; }));
   const targetPlaceholders = restoredIds.map(function () { return "?"; }).join(", ");
@@ -1265,12 +1297,13 @@ async function updateClassCodeSetting(context, user) {
 
 async function listAdminGuides({ request, env }, user) {
   requireTeacher(user);
+  await ensureIdentificationReviewSchema(env);
   const url = new URL(request.url);
   const classValue = url.searchParams.get("class");
   const classNumber = classValue && classValue !== "all" ? integer(classValue, 1, 9, "반") : null;
   const where = classNumber ? " WHERE st.class_number = ?" : "";
   const statement = env.ECO_DB.prepare(
-    "SELECT g.*, st.class_number, st.student_number, st.student_name, st.group_number, o.species_name, o.scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN students st ON st.id = g.student_id JOIN observations o ON o.id = g.observation_id" + where + " ORDER BY st.class_number, st.student_number, g.updated_at DESC LIMIT 1000"
+    "SELECT g.*, st.class_number, st.student_number, st.student_name, st.group_number, COALESCE(NULLIF(g.identified_name, ''), o.species_name) AS species_name, COALESCE(NULLIF(g.identified_scientific_name, ''), o.scientific_name) AS scientific_name, o.species_name AS observation_species_name, o.scientific_name AS observation_scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN students st ON st.id = g.student_id JOIN observations o ON o.id = g.observation_id" + where + " ORDER BY st.class_number, st.student_number, g.updated_at DESC LIMIT 1000"
   );
   const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
   const origin = new URL(request.url).origin;
@@ -1282,8 +1315,139 @@ async function listAdminGuides({ request, env }, user) {
   });
 }
 
+async function listIdentificationProposals({ request, env }, user) {
+  requireTeacher(user);
+  await ensureIdentificationReviewSchema(env);
+  const result = await env.ECO_DB.prepare(
+    "SELECT p.*, s.class_number, s.student_number, s.student_name, o.species_name AS current_name, o.scientific_name AS current_scientific_name, o.category, o.place_name, o.updated_at AS observation_updated_at FROM identification_proposals p JOIN students s ON s.id = p.student_id JOIN observations o ON o.id = p.observation_id WHERE p.status = 'pending' ORDER BY p.created_at ASC LIMIT 500"
+  ).all();
+  const origin = new URL(request.url).origin;
+  return json({
+    ok: true,
+    proposals: result.results.map(function (row) {
+      return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) };
+    })
+  });
+}
+
+async function resolveIdentificationProposal(context, user, id) {
+  const { request, env } = context;
+  requireTeacher(user);
+  await ensureIdentificationReviewSchema(env);
+  const body = await readJson(request);
+  const action = String(body.action || "");
+  if (action !== "approve" && action !== "reject") {
+    return json({ ok: false, error: "승인 또는 반려를 선택해 주세요." }, 400);
+  }
+  const teacherNote = optionalText(body.teacher_note, 500, "교사 메모");
+  const proposal = await env.ECO_DB.prepare(
+    "SELECT p.*, o.class_number, o.group_number, o.student_id AS discoverer_id, o.student_name AS discoverer_name, o.latitude, o.longitude, o.place_name, o.category, o.species_name AS current_name, o.scientific_name AS current_scientific_name, o.features, o.identification_reason, o.source AS observation_source, o.photo_key, o.photo_mime, o.created_at AS observed_at FROM identification_proposals p JOIN observations o ON o.id = p.observation_id WHERE p.id = ?"
+  ).bind(id).first();
+  if (!proposal) return json({ ok: false, error: "이름 수정 제안을 찾을 수 없습니다." }, 404);
+  if (proposal.status !== "pending") return json({ ok: false, error: "이미 처리된 이름 수정 제안입니다." }, 409);
+
+  const now = new Date().toISOString();
+  if (action === "reject") {
+    await env.ECO_DB.prepare(
+      "UPDATE identification_proposals SET status = 'rejected', teacher_note = ?, updated_at = ?, resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(teacherNote, now, now, id).run();
+    return json({ ok: true, status: "rejected" });
+  }
+
+  const origin = new URL(request.url).origin;
+  const observation = {
+    id: proposal.observation_id,
+    observation_id: proposal.observation_id,
+    class_number: proposal.class_number,
+    group_number: proposal.group_number,
+    student_id: proposal.discoverer_id,
+    student_name: proposal.discoverer_name,
+    latitude: proposal.latitude,
+    longitude: proposal.longitude,
+    place_name: proposal.place_name,
+    category: proposal.category,
+    species_name: proposal.proposed_name,
+    scientific_name: proposal.proposed_scientific_name,
+    features: proposal.features,
+    identification_reason: proposal.evidence,
+    source: proposal.source,
+    identification_status: "확실함",
+    review_status: "정상",
+    photo_url: origin + "/api/eco/photos/" + proposal.observation_id + "?v=" + encodeURIComponent(now),
+    created_at: proposal.observed_at,
+    updated_at: now
+  };
+  const relatedGuides = await env.ECO_DB.prepare(
+    "SELECT g.*, s.class_number, s.student_number, s.student_name FROM field_guides g JOIN students s ON s.id = g.student_id WHERE g.observation_id = ?"
+  ).bind(proposal.observation_id).all();
+  const observationSync = makeSyncEvent("observation.upsert", proposal.observation_id, observation);
+  const guideSyncs = relatedGuides.results.map(function (guide) {
+    return makeSyncEvent("guide.upsert", guide.id, {
+      guide_id: guide.id, created_at: guide.created_at, updated_at: guide.updated_at,
+      student_id: guide.student_id, class_number: guide.class_number,
+      student_number: guide.student_number, student_name: guide.student_name,
+      observation_id: proposal.observation_id,
+      species_name: guide.identified_name || proposal.proposed_name,
+      scientific_name: guide.identified_scientific_name || proposal.proposed_scientific_name,
+      category: proposal.category, place_name: proposal.place_name,
+      latitude: proposal.latitude, longitude: proposal.longitude,
+      habitat: guide.habitat, key_features: guide.key_features,
+      ecological_role: guide.ecological_role, report: guide.report,
+      source: guide.source, status: guide.status, photo_url: observation.photo_url
+    });
+  });
+  await env.ECO_DB.batch([
+    env.ECO_DB.prepare(
+      "UPDATE observations SET species_name = ?, scientific_name = ?, identification_reason = ?, source = ?, identification_status = '확실함', review_status = '정상', updated_at = ? WHERE id = ?"
+    ).bind(proposal.proposed_name, proposal.proposed_scientific_name, proposal.evidence, proposal.source, now, proposal.observation_id),
+    env.ECO_DB.prepare(
+      "UPDATE identification_proposals SET status = 'approved', teacher_note = ?, updated_at = ?, resolved_at = ? WHERE id = ? AND status = 'pending'"
+    ).bind(teacherNote, now, now, id),
+    syncStatement(env.ECO_DB, observationSync),
+    ...guideSyncs.map(function (event) { return syncStatement(env.ECO_DB, event); })
+  ]);
+  context.waitUntil(syncSheetEvent(env, observationSync));
+  guideSyncs.forEach(function (event) { context.waitUntil(syncSheetEvent(env, event)); });
+  return json({ ok: true, status: "approved", observation });
+}
+
+async function ensureIdentificationReviewSchema(env) {
+  if (!identificationReviewSchemaPromise) {
+    identificationReviewSchemaPromise = (async function () {
+      const columns = await env.ECO_DB.prepare("PRAGMA table_info(field_guides)").all();
+      const names = new Set(columns.results.map(function (column) { return column.name; }));
+      if (!names.has("identified_name")) {
+        try { await env.ECO_DB.prepare("ALTER TABLE field_guides ADD COLUMN identified_name TEXT NOT NULL DEFAULT ''").run(); }
+        catch (error) { if (!/duplicate column/i.test(String(error && error.message))) throw error; }
+      }
+      if (!names.has("identified_scientific_name")) {
+        try { await env.ECO_DB.prepare("ALTER TABLE field_guides ADD COLUMN identified_scientific_name TEXT NOT NULL DEFAULT ''").run(); }
+        catch (error) { if (!/duplicate column/i.test(String(error && error.message))) throw error; }
+      }
+      await env.ECO_DB.batch([
+        env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS identification_proposals (id TEXT PRIMARY KEY, observation_id TEXT NOT NULL REFERENCES observations(id) ON DELETE CASCADE, student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE, proposed_name TEXT NOT NULL, proposed_scientific_name TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')), teacher_note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT)"),
+        env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_identification_proposals_status ON identification_proposals(status, created_at)"),
+        env.ECO_DB.prepare("CREATE INDEX IF NOT EXISTS idx_identification_proposals_observation ON identification_proposals(observation_id, student_id)")
+      ]);
+    }()).catch(function (error) {
+      identificationReviewSchemaPromise = null;
+      throw error;
+    });
+  }
+  await identificationReviewSchemaPromise;
+}
+
+export function sameIdentification(nameA, scientificA, nameB, scientificB) {
+  return normalizeStudentName(nameA) === normalizeStudentName(nameB) &&
+    normalizeStudentName(scientificA) === normalizeStudentName(scientificB);
+}
+
 function normalizeStudentName(value) {
   return String(value || "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+}
+
+export function normalizeStudentLoginName(value) {
+  return normalizeStudentName(value).replace(/\(공동\)$/u, "");
 }
 
 function normalizeRosterStatus(value) {

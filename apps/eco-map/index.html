@@ -499,6 +499,17 @@
       <form id="guide-form">
         <div class="guide-editor-body">
           <div id="guide-selected-observation" class="guide-selected-observation"></div>
+          <section class="guide-identification-editor">
+            <div><span class="pixel-label">MY IDENTIFICATION</span><h3>내가 확인한 생물 이름</h3><p>공동 기록이 미확인이어도 조사한 이름으로 내 도감을 완성할 수 있습니다.</p></div>
+            <div class="guide-identification-grid">
+              <label class="field-label">생물 이름<input id="guide-species-name" type="text" minlength="1" maxlength="80" required /></label>
+              <label class="field-label">학명 (선택)<input id="guide-scientific-name" type="text" maxlength="120" /></label>
+            </div>
+            <label class="check-row guide-correction-check"><input id="guide-propose-correction" type="checkbox" /><span>이 이름을 공동 생태지도에도 반영하도록 교사에게 수정 제안하기</span></label>
+            <label id="guide-correction-reason-wrap" class="field-label guide-correction-reason" hidden>이름 수정 근거
+              <textarea id="guide-correction-reason" rows="3" minlength="5" maxlength="1000" placeholder="사진에서 확인한 특징과 이 이름이라고 판단한 근거를 적어주세요."></textarea>
+            </label>
+          </section>
           <div class="guide-form-grid">
             <label class="field-label">서식지
               <textarea id="guide-habitat" rows="3" minlength="5" maxlength="1000" placeholder="이 생물이 주로 살아가는 환경을 적어주세요." required></textarea>

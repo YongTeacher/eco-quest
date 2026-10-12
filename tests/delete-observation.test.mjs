@@ -93,7 +93,8 @@ test("teacher can restore a retained observation and its guide", async () => {
   const guide = {
     id: guideId, student_id: "student-1", observation_id: observationId,
     habitat: "운동장", key_features: "잎", ecological_role: "생산자", report: "조사",
-    source: "자료", status: "완료", created_at: observation.created_at, updated_at: observation.updated_at
+    source: "자료", identified_name: "서양민들레", identified_scientific_name: "Taraxacum officinale",
+    status: "완료", created_at: observation.created_at, updated_at: observation.updated_at
   };
   const trash = {
     id: observationId, observation_json: JSON.stringify(observation), guides_json: JSON.stringify([guide]),
@@ -113,6 +114,7 @@ test("teacher can restore a retained observation and its guide", async () => {
             throw new Error("Unexpected first query: " + sql);
           },
           async all() {
+            if (sql === "PRAGMA table_info(field_guides)") return { results: [{ name: "identified_name" }, { name: "identified_scientific_name" }] };
             if (sql.includes("FROM students WHERE id IN")) return { results: [{ id: "student-1", class_number: 9, student_number: 99, student_name: "테스트학생", group_number: 1 }] };
             if (sql.includes("FROM reflections f")) return { results: [] };
             if (sql.includes("SELECT student_id, COUNT(*)")) return { results: [] };
@@ -134,7 +136,10 @@ test("teacher can restore a retained observation and its guide", async () => {
   assert.deepEqual((await response.json()).restored, { observations: 1, guides: 1 });
   const statements = batches.flat();
   assert.ok(statements.some((statement) => statement.sql.startsWith("INSERT INTO observations")));
-  assert.ok(statements.some((statement) => statement.sql.startsWith("INSERT INTO field_guides")));
+  const guideInsert = statements.find((statement) => statement.sql.startsWith("INSERT INTO field_guides"));
+  assert.ok(guideInsert);
+  assert.ok(guideInsert.sql.includes("identified_name"));
+  assert.ok(guideInsert.values.includes("서양민들레"));
   assert.ok(statements.some((statement) => statement.sql.includes("DELETE FROM observation_trash")));
 });
 
