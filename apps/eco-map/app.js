@@ -354,7 +354,7 @@
           minLevel: 1,
           disableClickZoom: false
         });
-        studentPhotoMapRenderer = createPhotoMapRenderer(kakaoMap, markerClusterer, renderObservationInspector);
+        studentPhotoMapRenderer = createPhotoMapRenderer(kakaoMap, markerClusterer, renderObservationInspector, renderObservationGroupInspector);
 
         var schoolMarker = new window.kakao.maps.Marker({
           map: kakaoMap,
@@ -462,11 +462,32 @@
       '</div>';
   }
 
+  function renderObservationGroupInspector(groupObservations, center) {
+    var inspector = document.getElementById("map-inspector");
+    var zoomButton = kakaoMap && kakaoMap.getLevel() > 1
+      ? '<button class="secondary-button cluster-zoom-button" type="button" data-cluster-zoom="true" data-lat="' + escapeHtml(center.getLat()) + '" data-lng="' + escapeHtml(center.getLng()) + '">＋ 이 구역 더 확대하기</button>'
+      : '';
+    inspector.innerHTML =
+      '<div class="cluster-inspector">' +
+        '<div class="cluster-inspector-head"><span class="pixel-label">NEARBY OBSERVATIONS</span><h3>이 주변의 관찰 ' + groupObservations.length + '건</h3><p>현재 지도에서 가까운 위치의 기록을 묶었습니다. 사진을 누르면 상세 기록을 볼 수 있습니다.</p></div>' +
+        zoomButton +
+        '<div class="cluster-observation-list">' + groupObservations.map(function (observation) {
+          return '<button class="cluster-observation-card" type="button" data-cluster-observation="' + escapeHtml(observation.id) + '">' +
+            '<img src="' + escapeHtml(mapThumbnailUrl(observation.photo_url)) + '" alt="" loading="lazy" />' +
+            '<span><b>' + escapeHtml(observation.species_name) + '</b><span>⌖ ' + escapeHtml(observation.place_name) + '</span><small>' + escapeHtml(observation.class_number + "반 " + observation.group_number + "모둠 · " + observation.student_name) + '</small></span>' +
+          '</button>';
+        }).join("") + '</div>' +
+      '</div>';
+    if (window.innerWidth <= 780 && !document.getElementById("map-layout").classList.contains("map-expanded")) {
+      inspector.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   function mapThumbnailUrl(photoUrl) {
     return photoUrl + (photoUrl.indexOf("?") === -1 ? "?" : "&") + "thumb=1";
   }
 
-  function createPhotoMapRenderer(map, clusterer, onSelect) {
+  function createPhotoMapRenderer(map, clusterer, onSelect, onGroup) {
     var items = [];
     var overlays = [];
 
@@ -479,7 +500,7 @@
       var button = document.createElement("button");
       button.type = "button";
       button.className = "map-photo-marker" + (count > 1 ? " grouped" : "");
-      button.title = count > 1 ? observation.species_name + " 외 " + count + "건 · 확대해서 보기" : observation.species_name + " 관찰 보기";
+      button.title = count > 1 ? "이 주변의 관찰 " + count + "건 목록 보기" : observation.species_name + " 관찰 보기";
       button.setAttribute("aria-label", button.title);
       var image = document.createElement("img");
       image.src = mapThumbnailUrl(observation.photo_url);
@@ -510,11 +531,13 @@
         if (cluster.getSize() < 2) return;
         var members = cluster.getMarkers();
         members.forEach(function (marker) { grouped.add(marker); });
-        var representative = members.map(function (marker) { return byMarker.get(marker); }).find(Boolean);
+        var groupObservations = members.map(function (marker) { return byMarker.get(marker); }).filter(Boolean);
+        var representative = groupObservations[0];
         if (!representative || shownGroups >= 8 || !bounds.contain(cluster.getCenter())) return;
         shownGroups += 1;
         addPhoto(cluster.getCenter(), representative, cluster.getSize(), function () {
-          if (map.getLevel() > 1) map.setLevel(map.getLevel() - 1, { anchor: cluster.getCenter() });
+          if (onGroup) onGroup(groupObservations, cluster.getCenter());
+          else if (map.getLevel() > 1) map.setLevel(map.getLevel() - 1, { anchor: cluster.getCenter() });
           else onSelect(representative);
         });
       });
@@ -1089,6 +1112,7 @@
     else if (!document.getElementById("guide-editor-modal").hidden) closeGuideEditor();
     else if (!document.getElementById("location-picker-modal").hidden) closeLocationPicker();
     else if (!document.getElementById("observation-edit-modal").hidden) closeObservationEditor();
+    else if (document.getElementById("map-layout").classList.contains("map-expanded")) setStudentMapExpanded(false);
   });
   var photoViewerPreviousFocus = null;
   function closePhotoViewer() {
@@ -2356,6 +2380,39 @@
       showToast(error.message);
     });
   }
+
+  function setStudentMapExpanded(expanded) {
+    var layout = document.getElementById("map-layout");
+    var button = document.getElementById("map-fullscreen-button");
+    layout.classList.toggle("map-expanded", expanded);
+    document.body.classList.toggle("map-fullscreen-open", expanded);
+    button.setAttribute("aria-pressed", expanded ? "true" : "false");
+    button.textContent = expanded ? "✕ 전체화면 닫기" : "⛶ 전체화면";
+    window.setTimeout(function () {
+      if (!kakaoMap) return;
+      var center = kakaoMap.getCenter();
+      kakaoMap.relayout();
+      kakaoMap.setCenter(center);
+    }, 0);
+  }
+
+  document.getElementById("map-fullscreen-button").addEventListener("click", function () {
+    setStudentMapExpanded(!document.getElementById("map-layout").classList.contains("map-expanded"));
+  });
+
+  document.getElementById("map-inspector").addEventListener("click", function (event) {
+    var observationButton = event.target.closest("[data-cluster-observation]");
+    if (observationButton) {
+      var observation = observations.find(function (item) { return item.id === observationButton.dataset.clusterObservation; });
+      if (observation) renderObservationInspector(observation);
+      return;
+    }
+    var zoomButton = event.target.closest("[data-cluster-zoom]");
+    if (!zoomButton || !kakaoMap || kakaoMap.getLevel() <= 1) return;
+    kakaoMap.setLevel(kakaoMap.getLevel() - 1, {
+      anchor: new window.kakao.maps.LatLng(Number(zoomButton.dataset.lat), Number(zoomButton.dataset.lng))
+    });
+  });
 
   function renderIdentificationProposals() {
     var list = document.querySelector(".exception-list");
