@@ -2455,13 +2455,20 @@
     return status === "synced" ? "동기화 완료" : status === "pending" ? "전송 대기" : status === "failed" ? "동기화 실패" : "저장 전";
   }
 
-  function loadAdminReflections() {
+  function loadAdminReflections(manualRefresh) {
+    var refreshButton = document.getElementById("refresh-admin-reflections");
+    refreshButton.disabled = true;
+    refreshButton.textContent = "↻ 불러오는 중…";
     api("admin/reflections").then(function (result) {
       adminReflections = result.reflections || [];
       renderAdminReflections();
+      if (manualRefresh) showToast("소감문 제출 현황을 새로 불러왔습니다.");
     }).catch(function (error) {
       if (error.status === 401) showLogin();
       showToast(error.message);
+    }).finally(function () {
+      refreshButton.disabled = false;
+      refreshButton.textContent = "↻ 새로고침";
     });
   }
 
@@ -2567,6 +2574,7 @@
   document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
   document.getElementById("admin-reflection-class").addEventListener("change", renderAdminReflections);
   document.getElementById("admin-reflection-status").addEventListener("change", renderAdminReflections);
+  document.getElementById("refresh-admin-reflections").addEventListener("click", function () { loadAdminReflections(true); });
   document.getElementById("teacher-app").addEventListener("click", function (event) {
     var observationCard = event.target.closest("[data-admin-observation]");
     var guideCard = event.target.closest("[data-admin-guide]");

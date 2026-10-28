@@ -475,3 +475,4 @@ body.modal-open { overflow: hidden; }
 }
 
 .activity-locked-notice { margin: 10px 0 0; padding: 10px 12px; border: 1px solid #e2b9af; border-radius: 9px; color: #9f3f2c; background: #f8e5df; font-size: 12px; font-weight: 850; line-height: 1.45; }
+.reflection-filters { align-items: end; }.admin-refresh-button { min-height: 40px; padding: 0 13px; border: 1px solid var(--forest-700); border-radius: 9px; color: #fff; background: var(--forest-700); font-size: 12px; font-weight: 900; white-space: nowrap; }.admin-refresh-button:hover { background: var(--forest-900); }.admin-refresh-button:disabled { cursor: wait; opacity: .58; }
