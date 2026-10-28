@@ -39,6 +39,7 @@ const AI_IDENTIFICATION_SCHEMA = {
 let rosterSchemaPromise;
 let reflectionSchemaPromise;
 let settingsSchemaPromise;
+let classActivitySettingsSchemaPromise;
 let trashSchemaPromise;
 let aiIdentificationSchemaPromise;
 let identificationReviewSchemaPromise;
@@ -101,6 +102,9 @@ async function route(context) {
   if (method === "PATCH" && identificationProposalMatch) return resolveIdentificationProposal(context, user, identificationProposalMatch[1]);
   if (method === "GET" && path === "admin/reflections") return listAdminReflections(context, user);
   if (method === "PATCH" && path === "admin/reflections/settings") return updateReflectionSettings(context, user);
+  if (method === "GET" && path === "admin/class-activity-settings") return listClassActivitySettings(context, user);
+  const classActivitySettingsMatch = path.match(/^admin\/class-activity-settings\/([1-9])$/);
+  if (method === "PATCH" && classActivitySettingsMatch) return updateClassActivitySettings(context, user, Number(classActivitySettingsMatch[1]));
   if (method === "GET" && path === "admin/class-code") return getClassCodeSetting(context, user);
   if (method === "PATCH" && path === "admin/class-code") return updateClassCodeSetting(context, user);
   if (method === "GET" && path === "admin/roster") return listRoster(context, user);
@@ -259,11 +263,17 @@ async function listObservations({ request, env }, user) {
     "SELECT id, class_number, group_number, student_id, student_name, latitude, longitude, place_name, category, species_name, scientific_name, features, identification_reason, source, identification_status, review_status, created_at, updated_at FROM observations" + where + " ORDER BY created_at DESC LIMIT 1000"
   ).bind(...values).all();
   const origin = new URL(request.url).origin;
-  return json({ ok: true, observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id + "?v=" + encodeURIComponent(row.updated_at) }; }), viewer: user.role });
+  return json({
+    ok: true,
+    observations: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.id + "?v=" + encodeURIComponent(row.updated_at) }; }),
+    viewer: user.role,
+    activity_locks: user.role === "student" ? await classActivitySettings(env, user.class_number) : null
+  });
 }
 
 async function identifyOrganism({ request, env }, user) {
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await requireStudentActivityOpen(env, user, "observations");
   requireBindings(env, ["ECO_DB", "AI"]);
   await ensureAiIdentificationSchema(env);
   await env.ECO_DB.prepare("DELETE FROM ai_identification_requests WHERE status = 'pending' AND updated_at < ?")
@@ -627,6 +637,7 @@ async function ensureAiIdentificationSchema(env) {
 async function createObservation(context, user) {
   const { request, env } = context;
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await requireStudentActivityOpen(env, user, "observations");
   requireBindings(env, ["ECO_PHOTOS", "ECO_SHEETS_WEBHOOK_URL", "ECO_SHEETS_WEBHOOK_SECRET"]);
   const form = await request.formData();
   const photo = form.get("photo");
@@ -740,12 +751,18 @@ async function listGuides({ request, env }, user) {
     "SELECT g.*, COALESCE(NULLIF(g.identified_name, ''), o.species_name) AS species_name, COALESCE(NULLIF(g.identified_scientific_name, ''), o.scientific_name) AS scientific_name, o.species_name AS observation_species_name, o.scientific_name AS observation_scientific_name, o.category, o.place_name, o.latitude, o.longitude, o.student_name AS discoverer_name, o.created_at AS observed_at, o.updated_at AS observation_updated_at FROM field_guides g JOIN observations o ON o.id = g.observation_id WHERE g.student_id = ? ORDER BY g.updated_at DESC"
   ).bind(user.id).all();
   const origin = new URL(request.url).origin;
-  return json({ ok: true, guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) }; }), guide_limit: user.guide_limit });
+  return json({
+    ok: true,
+    guides: result.results.map(function (row) { return { ...row, photo_url: origin + "/api/eco/photos/" + row.observation_id + "?v=" + encodeURIComponent(row.observation_updated_at) }; }),
+    guide_limit: user.guide_limit,
+    activity_locks: await classActivitySettings(env, user.class_number)
+  });
 }
 
 async function createGuide(context, user) {
   const { request, env } = context;
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await requireStudentActivityOpen(env, user, "guides");
   await ensureIdentificationReviewSchema(env);
   const body = await readJson(request);
   const observationId = String(body.observation_id || "");
@@ -849,6 +866,7 @@ async function ensureRosterSchema(env) {
 async function updateObservation(context, user, id) {
   const { request, env } = context;
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  await requireStudentActivityOpen(env, user, "observations");
   const original = await env.ECO_DB.prepare("SELECT * FROM observations WHERE id = ?").bind(id).first();
   if (!original) return json({ ok: false, error: "관찰 기록을 찾을 수 없습니다." }, 404);
   if (original.student_id !== user.id) return json({ ok: false, error: "본인이 등록한 관찰 기록만 수정할 수 있습니다." }, 403);
@@ -1169,6 +1187,41 @@ async function ensureSettingsSchema(env) {
   return settingsSchemaPromise;
 }
 
+async function ensureClassActivitySettingsSchema(env) {
+  if (!classActivitySettingsSchemaPromise) {
+    classActivitySettingsSchemaPromise = env.ECO_DB.batch([
+      env.ECO_DB.prepare("CREATE TABLE IF NOT EXISTS class_activity_settings (class_number INTEGER PRIMARY KEY CHECK (class_number BETWEEN 1 AND 9), observations_locked INTEGER NOT NULL DEFAULT 0 CHECK (observations_locked IN (0, 1)), guides_locked INTEGER NOT NULL DEFAULT 0 CHECK (guides_locked IN (0, 1)), reflections_locked INTEGER NOT NULL DEFAULT 0 CHECK (reflections_locked IN (0, 1)), reflection_edits_after_submit INTEGER NOT NULL DEFAULT 0 CHECK (reflection_edits_after_submit IN (0, 1)), updated_at TEXT NOT NULL)")
+    ]).catch(function (error) {
+      classActivitySettingsSchemaPromise = null;
+      throw error;
+    });
+  }
+  return classActivitySettingsSchemaPromise;
+}
+
+async function classActivitySettings(env, classNumber) {
+  await ensureClassActivitySettingsSchema(env);
+  const row = await env.ECO_DB.prepare("SELECT observations_locked, guides_locked, reflections_locked, reflection_edits_after_submit, updated_at FROM class_activity_settings WHERE class_number = ?")
+    .bind(Number(classNumber)).first();
+  const legacyReflectionEdits = row ? false : await reflectionEditsAllowed(env);
+  return {
+    class_number: Number(classNumber),
+    observations_locked: Boolean(row && Number(row.observations_locked)),
+    guides_locked: Boolean(row && Number(row.guides_locked)),
+    reflections_locked: Boolean(row && Number(row.reflections_locked)),
+    reflection_edits_after_submit: row ? Boolean(Number(row.reflection_edits_after_submit)) : legacyReflectionEdits,
+    updated_at: row && row.updated_at || null
+  };
+}
+
+async function requireStudentActivityOpen(env, user, activity) {
+  const settings = await classActivitySettings(env, user.class_number);
+  const key = activity + "_locked";
+  if (!settings[key]) return settings;
+  const labels = { observations: "생물 발견", guides: "개인 생물도감", reflections: "소감문" };
+  throw new HttpError(409, user.class_number + "반 " + labels[activity] + " 활동은 선생님이 마감했습니다. 기존 자료는 그대로 보관됩니다.");
+}
+
 async function effectiveClassCode(env) {
   await ensureSettingsSchema(env);
   const setting = await env.ECO_DB.prepare("SELECT setting_value FROM eco_settings WHERE setting_key = 'class_code'").first();
@@ -1195,17 +1248,24 @@ async function reflectionEditsAllowed(env) {
 async function getReflection({ env }, user) {
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
   await ensureReflectionSchema(env);
-  const [reflection, guideCount, allowEdits] = await Promise.all([
+  const [reflection, guideCount, activitySettings] = await Promise.all([
     env.ECO_DB.prepare("SELECT * FROM reflections WHERE student_id = ?").bind(user.id).first(),
     env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM field_guides WHERE student_id = ? AND status = '완료'").bind(user.id).first(),
-    reflectionEditsAllowed(env)
+    classActivitySettings(env, user.class_number)
   ]);
-  return json({ ok: true, reflection: reflection || null, guide_count: Number(guideCount.count || 0), allow_edits_after_submit: allowEdits });
+  return json({
+    ok: true,
+    reflection: reflection || null,
+    guide_count: Number(guideCount.count || 0),
+    allow_edits_after_submit: activitySettings.reflection_edits_after_submit,
+    activity_locks: activitySettings
+  });
 }
 
 async function saveReflection(context, user) {
   const { request, env } = context;
   if (user.role !== "student") throw new HttpError(403, "학생 계정으로 로그인해 주세요.");
+  const activitySettings = await requireStudentActivityOpen(env, user, "reflections");
   await ensureReflectionSchema(env);
   const body = await readJson(request);
   const status = body.status === "submitted" ? "submitted" : body.status === "draft" ? "draft" : "";
@@ -1220,7 +1280,7 @@ async function saveReflection(context, user) {
     free_reflection: optionalText(body.free_reflection, 3000, "자유 소감")
   };
   const existing = await env.ECO_DB.prepare("SELECT * FROM reflections WHERE student_id = ?").bind(user.id).first();
-  if (existing && existing.status === "submitted" && !(await reflectionEditsAllowed(env))) {
+  if (existing && existing.status === "submitted" && !activitySettings.reflection_edits_after_submit) {
     return json({ ok: false, error: "최종 제출이 완료되어 수정할 수 없습니다. 담당 선생님께 수정 허용을 요청해 주세요." }, 409);
   }
   const guideCount = await env.ECO_DB.prepare("SELECT COUNT(*) AS count FROM field_guides WHERE student_id = ? AND status = '완료'").bind(user.id).first();
@@ -1249,7 +1309,7 @@ async function saveReflection(context, user) {
     syncStatement(env.ECO_DB, sync)
   ]);
   context.waitUntil(syncSheetEvent(env, sync));
-  return json({ ok: true, reflection: data, allow_edits_after_submit: await reflectionEditsAllowed(env) });
+  return json({ ok: true, reflection: data, allow_edits_after_submit: activitySettings.reflection_edits_after_submit, activity_locks: activitySettings });
 }
 
 async function listAdminReflections({ request, env }, user) {
@@ -1264,7 +1324,37 @@ async function listAdminReflections({ request, env }, user) {
     "SELECT r.id AS student_id, r.class_number, r.student_number, r.student_name, r.group_number, COALESCE((SELECT COUNT(*) FROM field_guides g WHERE g.student_id = s.id AND g.status = '완료'), 0) AS guide_count, f.memorable_species, f.contribution, f.problem_solving, f.ecological_learning, f.perspective_change, f.further_question, f.free_reflection, COALESCE(f.status, 'not_started') AS reflection_status, f.created_at, f.submitted_at, f.updated_at, COALESCE((SELECT q.status FROM sheet_sync_queue q WHERE q.event_type = 'reflection.upsert' AND q.target_id = r.id ORDER BY q.updated_at DESC LIMIT 1), 'not_queued') AS sync_status FROM student_roster r LEFT JOIN students s ON s.class_number = r.class_number AND s.student_number = r.student_number LEFT JOIN reflections f ON f.student_id = s.id" + where + " ORDER BY r.class_number, r.student_number LIMIT 500"
   );
   const result = classNumber ? await statement.bind(classNumber).all() : await statement.all();
-  return json({ ok: true, reflections: result.results, allow_edits_after_submit: await reflectionEditsAllowed(env) });
+  return json({ ok: true, reflections: result.results });
+}
+
+async function listClassActivitySettings({ env }, user) {
+  requireTeacher(user);
+  const settings = await Promise.all(Array.from({ length: 9 }, function (_value, index) {
+    return classActivitySettings(env, index + 1);
+  }));
+  return json({ ok: true, classes: settings });
+}
+
+async function updateClassActivitySettings(context, user, classNumber) {
+  const { request, env } = context;
+  requireTeacher(user);
+  const body = await readJson(request);
+  const current = await classActivitySettings(env, classNumber);
+  const keys = ["observations_locked", "guides_locked", "reflections_locked", "reflection_edits_after_submit"];
+  const next = { ...current };
+  let changed = false;
+  keys.forEach(function (key) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      if (typeof body[key] !== "boolean") throw new HttpError(400, "반별 활동 설정이 올바르지 않습니다.");
+      next[key] = body[key];
+      changed = true;
+    }
+  });
+  if (!changed) throw new HttpError(400, "변경할 활동 설정을 선택해 주세요.");
+  const now = new Date().toISOString();
+  await env.ECO_DB.prepare("INSERT INTO class_activity_settings (class_number, observations_locked, guides_locked, reflections_locked, reflection_edits_after_submit, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(class_number) DO UPDATE SET observations_locked = excluded.observations_locked, guides_locked = excluded.guides_locked, reflections_locked = excluded.reflections_locked, reflection_edits_after_submit = excluded.reflection_edits_after_submit, updated_at = excluded.updated_at")
+    .bind(classNumber, next.observations_locked ? 1 : 0, next.guides_locked ? 1 : 0, next.reflections_locked ? 1 : 0, next.reflection_edits_after_submit ? 1 : 0, now).run();
+  return json({ ok: true, settings: { ...next, class_number: classNumber, updated_at: now } });
 }
 
 async function updateReflectionSettings(context, user) {

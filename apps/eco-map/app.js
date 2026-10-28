@@ -42,6 +42,7 @@
   var adminGuides = [];
   var adminTrash = [];
   var adminReflections = [];
+  var adminClassActivitySettings = [];
   var adminIdentificationProposals = [];
   var adminMap;
   var adminMapClusterer;
@@ -52,6 +53,12 @@
   var currentReflection;
   var pinResetStudent;
   var pinResetPreviousFocus;
+  var activitySettings = {
+    observations_locked: false,
+    guides_locked: false,
+    reflections_locked: false,
+    reflection_edits_after_submit: false
+  };
 
   function api(path, options) {
     var requestOptions = options || {};
@@ -105,10 +112,15 @@
     teacherApp.hidden = true;
     loginScreen.hidden = false;
     currentUser = null;
+    activitySettings = { observations_locked: false, guides_locked: false, reflections_locked: false, reflection_edits_after_submit: false };
     window.scrollTo(0, 0);
   }
 
   function setView(name) {
+    if (name === "discover" && activitySettings.observations_locked) {
+      showToast(currentUser.class_number + "반 생물 발견 활동은 선생님이 마감했습니다.");
+      return;
+    }
     document.querySelectorAll(".app-view").forEach(function (view) {
       view.classList.toggle("active", view.id === "view-" + name);
     });
@@ -147,7 +159,10 @@
     if (selected === "trash") loadAdminTrash();
     if (selected === "guides") loadAdminGuides();
     if (selected === "reflections") loadAdminReflections();
-    if (selected === "settings") loadClassCodeSetting();
+    if (selected === "settings") {
+      loadClassCodeSetting();
+      loadClassActivitySettings();
+    }
     if (selected === "dashboard") loadIdentificationProposals();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -164,6 +179,59 @@
       input.disabled = false;
     });
   }
+
+  function loadClassActivitySettings() {
+    var body = document.getElementById("class-activity-settings");
+    body.innerHTML = '<tr><td colspan="5" class="empty-message">반별 설정을 불러오는 중입니다.</td></tr>';
+    api("admin/class-activity-settings").then(function (result) {
+      adminClassActivitySettings = result.classes || [];
+      renderClassActivitySettings();
+    }).catch(function (error) {
+      if (error.status === 401) showLogin();
+      body.innerHTML = '<tr><td colspan="5" class="empty-message">설정을 불러오지 못했습니다.</td></tr>';
+      showToast(error.message);
+    });
+  }
+
+  function activitySettingButton(item, key, isOpen, openLabel, lockedLabel) {
+    var nextValue = key === "reflection_edits_after_submit" ? !isOpen : isOpen;
+    return '<button class="activity-toggle' + (isOpen ? '' : ' locked') + '" type="button" data-class-number="' + item.class_number + '" data-activity-key="' + key + '" data-next-value="' + String(nextValue) + '">' + (isOpen ? openLabel : lockedLabel) + '</button>';
+  }
+
+  function renderClassActivitySettings() {
+    document.getElementById("class-activity-settings").innerHTML = adminClassActivitySettings.map(function (item) {
+      return '<tr><td>' + item.class_number + '반</td>' +
+        '<td>' + activitySettingButton(item, "observations_locked", !item.observations_locked, "진행 가능", "마감·잠금") + '</td>' +
+        '<td>' + activitySettingButton(item, "guides_locked", !item.guides_locked, "진행 가능", "마감·잠금") + '</td>' +
+        '<td>' + activitySettingButton(item, "reflections_locked", !item.reflections_locked, "진행 가능", "마감·잠금") + '</td>' +
+        '<td>' + activitySettingButton(item, "reflection_edits_after_submit", item.reflection_edits_after_submit, "수정 허용", "수정 불가") + '</td></tr>';
+    }).join("");
+  }
+
+  document.getElementById("class-activity-settings").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-activity-key]");
+    if (!button || button.disabled) return;
+    var classNumber = Number(button.dataset.classNumber);
+    var key = button.dataset.activityKey;
+    var nextValue = button.dataset.nextValue === "true";
+    if (key !== "reflection_edits_after_submit" && nextValue && !window.confirm(classNumber + "반의 해당 활동을 마감할까요?\n기존 자료는 삭제되지 않고 새 등록과 수정만 차단됩니다.")) return;
+    button.disabled = true;
+    var payload = {};
+    payload[key] = nextValue;
+    api("admin/class-activity-settings/" + classNumber, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (result) {
+      var index = adminClassActivitySettings.findIndex(function (item) { return Number(item.class_number) === classNumber; });
+      if (index >= 0) adminClassActivitySettings.splice(index, 1, result.settings);
+      renderClassActivitySettings();
+      showToast(classNumber + "반 활동 설정을 저장했습니다. 기존 자료는 그대로 유지됩니다.");
+    }).catch(function (error) {
+      button.disabled = false;
+      showToast(error.message);
+    });
+  });
 
   document.getElementById("class-code-form").addEventListener("submit", function (event) {
     event.preventDefault();
@@ -473,8 +541,8 @@
         '<h3>' + escapeHtml(observation.species_name) + '</h3>' +
         '<p><i>' + escapeHtml(observation.scientific_name || "학명 미기록") + '</i></p>' +
         '<div class="species-list"><h4>발견 기록</h4><span>' + escapeHtml(observation.place_name) + '</span><span>' + escapeHtml(observation.class_number + "반 " + observation.group_number + "모둠 · " + observation.student_name) + '</span></div>' +
-        '<button class="primary-button inspector-guide-button" type="button" data-make-guide="' + escapeHtml(observation.id) + '">' + guideButtonLabel + '</button>' +
-        (currentUser && observation.student_id === currentUser.id ? '<button class="secondary-button inspector-edit-button" type="button" data-edit-observation="' + escapeHtml(observation.id) + '">✎ 내가 등록한 발견 수정</button>' : '') +
+        (activitySettings.guides_locked ? '<p class="activity-locked-notice">개인 생물도감 활동이 마감되었습니다.</p>' : '<button class="primary-button inspector-guide-button" type="button" data-make-guide="' + escapeHtml(observation.id) + '">' + guideButtonLabel + '</button>') +
+        (currentUser && observation.student_id === currentUser.id && !activitySettings.observations_locked ? '<button class="secondary-button inspector-edit-button" type="button" data-edit-observation="' + escapeHtml(observation.id) + '">✎ 내가 등록한 발견 수정</button>' : '') +
       '</div>';
   }
 
@@ -574,6 +642,7 @@
 
   function openObservationEditor(observation) {
     if (!currentUser || observation.student_id !== currentUser.id) return;
+    if (activitySettings.observations_locked) { showToast("생물 발견 활동이 마감되어 수정할 수 없습니다."); return; }
     editingObservation = observation;
     editLocation = { lat: Number(observation.latitude), lng: Number(observation.longitude), name: observation.place_name };
     document.getElementById("observation-edit-photo-preview").src = observation.photo_url;
@@ -671,6 +740,7 @@
     return Promise.all([api("observations"), api("guides")]).then(function (results) {
       observations = results[0].observations || [];
       guides = results[1].guides || [];
+      activitySettings = results[1].activity_locks || results[0].activity_locks || activitySettings;
       dexLimit = Number(results[1].guide_limit || currentUser.guide_limit || 3);
       renderStudentSummary();
       renderGuides();
@@ -709,7 +779,7 @@
     var cards = guides.map(function (guide, index) {
       return '<button class="dex-card complete" type="button" data-guide-index="' + index + '" aria-label="' + escapeHtml(guide.species_name) + ' 생물도감 자세히 보기"><div class="dex-image"><img src="' + escapeHtml(guide.photo_url) + '" alt="' + escapeHtml(guide.species_name) + '" /><em>NO. ' + String(index + 1).padStart(3, "0") + '</em></div><div class="dex-body"><div><span class="type-chip">' + escapeHtml(categoryLabel(guide.category)) + '</span><span class="verified">작성 완료</span></div><h3>' + escapeHtml(guide.species_name) + '</h3><p>' + escapeHtml(guide.scientific_name || "학명 미기록") + '</p><small>' + formatDate(guide.updated_at) + ' · 카드 보기</small></div></button>';
     });
-    if (guides.length < dexLimit) cards.push('<button class="empty-dex-card" type="button" data-go="map"><span>＋</span><h3>새 도감 만들기</h3><p>공동 관찰에서 생물을 선택하세요.</p></button>');
+    if (guides.length < dexLimit && !activitySettings.guides_locked) cards.push('<button class="empty-dex-card" type="button" data-go="map"><span>＋</span><h3>새 도감 만들기</h3><p>공동 관찰에서 생물을 선택하세요.</p></button>');
     grid.innerHTML = cards.join("");
     updateDexProgress();
   }
@@ -727,6 +797,7 @@
   }
 
   function renderReflection(result) {
+    activitySettings = result.activity_locks || activitySettings;
     currentReflection = result.reflection || null;
     var data = currentReflection || {};
     document.getElementById("reflection-memorable").value = data.memorable_species || "";
@@ -738,11 +809,14 @@
     document.getElementById("reflection-free").value = data.free_reflection || "";
     document.getElementById("reflection-guide-count").textContent = "완성 도감 " + Number(result.guide_count || 0) + "개";
     var submitted = data.status === "submitted";
-    var locked = submitted && !result.allow_edits_after_submit;
+    var activityLocked = Boolean(activitySettings.reflections_locked);
+    var locked = activityLocked || (submitted && !result.allow_edits_after_submit);
     var status = document.getElementById("reflection-status");
     status.textContent = submitted ? "최종 제출 완료" : data.status === "draft" ? "임시 저장" : "미작성";
     status.className = "reflection-status " + (submitted ? "submitted" : data.status === "draft" ? "draft" : "");
-    document.getElementById("reflection-edit-notice").textContent = submitted
+    document.getElementById("reflection-edit-notice").textContent = activityLocked
+      ? currentUser.class_number + "반 소감문 활동은 마감되었습니다. 작성한 내용은 그대로 보관됩니다."
+      : submitted
       ? locked ? "최종 제출이 완료되었습니다. 수정이 필요하면 담당 선생님께 요청하세요." : "선생님이 수정을 허용했습니다. 수정 후 다시 최종 제출하세요."
       : "최종 제출 후에는 교사의 허용이 있어야 수정할 수 있습니다.";
     document.querySelectorAll("#reflection-form textarea").forEach(function (field) { field.disabled = locked; });
@@ -772,7 +846,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(Object.assign(reflectionValues(), { status: status }))
     }).then(function (result) {
-      renderReflection({ reflection: result.reflection, guide_count: result.reflection.guide_count, allow_edits_after_submit: result.allow_edits_after_submit });
+      renderReflection({ reflection: result.reflection, guide_count: result.reflection.guide_count, allow_edits_after_submit: result.allow_edits_after_submit, activity_locks: result.activity_locks });
       showToast(status === "submitted" ? "소감문을 최종 제출했습니다." : "소감문을 임시 저장했습니다.");
     }).catch(function (error) {
       showToast(error.message);
@@ -895,6 +969,7 @@
   });
 
   function openGuideEditor(observation) {
+    if (activitySettings.guides_locked) { showToast("개인 생물도감 활동이 마감되어 작성하거나 수정할 수 없습니다."); return; }
     var existingGuide = guides.find(function (guide) { return guide.observation_id === observation.id; });
     if (!existingGuide && guides.length >= dexLimit) {
       showToast("허용된 생물도감 수를 모두 작성했습니다.");
@@ -2383,9 +2458,6 @@
   function loadAdminReflections() {
     api("admin/reflections").then(function (result) {
       adminReflections = result.reflections || [];
-      var toggle = document.getElementById("allow-reflection-edits");
-      toggle.checked = Boolean(result.allow_edits_after_submit);
-      document.getElementById("allow-reflection-label").textContent = toggle.checked ? "수정 허용 중" : "허용 안 함";
       renderAdminReflections();
     }).catch(function (error) {
       if (error.status === 401) showLogin();
@@ -2495,21 +2567,6 @@
   document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
   document.getElementById("admin-reflection-class").addEventListener("change", renderAdminReflections);
   document.getElementById("admin-reflection-status").addEventListener("change", renderAdminReflections);
-  document.getElementById("allow-reflection-edits").addEventListener("change", function () {
-    var toggle = this;
-    toggle.disabled = true;
-    api("admin/reflections/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ allow_edits_after_submit: toggle.checked })
-    }).then(function (result) {
-      document.getElementById("allow-reflection-label").textContent = result.allow_edits_after_submit ? "수정 허용 중" : "허용 안 함";
-      showToast(result.allow_edits_after_submit ? "최종 제출 후 수정을 허용했습니다." : "최종 제출 후 수정을 잠갔습니다.");
-    }).catch(function (error) {
-      toggle.checked = !toggle.checked;
-      showToast(error.message);
-    }).finally(function () { toggle.disabled = false; });
-  });
   document.getElementById("teacher-app").addEventListener("click", function (event) {
     var observationCard = event.target.closest("[data-admin-observation]");
     var guideCard = event.target.closest("[data-admin-guide]");

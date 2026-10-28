@@ -28,6 +28,9 @@ test("student photos are analyzed by Workers AI and taxonomy candidates are vali
                 expires_at: "9999-12-31T00:00:00.000Z"
               };
             }
+            if (sql.includes("FROM class_activity_settings")) {
+              return { observations_locked: 0, guides_locked: 0, reflections_locked: 0, reflection_edits_after_submit: 0, updated_at: null };
+            }
             if (sql.includes("SELECT result_json")) return null;
             if (sql.includes("COUNT(*)")) return { count: 1 };
             throw new Error("Unexpected first query: " + sql);
