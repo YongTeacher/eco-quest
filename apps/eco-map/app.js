@@ -2457,18 +2457,23 @@
 
   function loadAdminReflections(manualRefresh) {
     var refreshButton = document.getElementById("refresh-admin-reflections");
-    refreshButton.disabled = true;
-    refreshButton.textContent = "↻ 불러오는 중…";
+    if (refreshButton) {
+      refreshButton.disabled = true;
+      refreshButton.textContent = "↻ 불러오는 중…";
+    }
     api("admin/reflections").then(function (result) {
       adminReflections = result.reflections || [];
       renderAdminReflections();
       if (manualRefresh) showToast("소감문 제출 현황을 새로 불러왔습니다.");
     }).catch(function (error) {
       if (error.status === 401) showLogin();
+      document.getElementById("admin-reflection-list").innerHTML = '<tr><td colspan="9" class="empty-message">소감문 현황을 불러오지 못했습니다. 새로고침 버튼을 눌러 다시 시도해 주세요.<br><small>' + escapeHtml(error.message) + '</small></td></tr>';
       showToast(error.message);
     }).finally(function () {
-      refreshButton.disabled = false;
-      refreshButton.textContent = "↻ 새로고침";
+      if (refreshButton) {
+        refreshButton.disabled = false;
+        refreshButton.textContent = "↻ 새로고침";
+      }
     });
   }
 
@@ -2574,7 +2579,8 @@
   document.getElementById("admin-guide-class").addEventListener("change", renderAdminGuides);
   document.getElementById("admin-reflection-class").addEventListener("change", renderAdminReflections);
   document.getElementById("admin-reflection-status").addEventListener("change", renderAdminReflections);
-  document.getElementById("refresh-admin-reflections").addEventListener("click", function () { loadAdminReflections(true); });
+  var refreshAdminReflectionsButton = document.getElementById("refresh-admin-reflections");
+  if (refreshAdminReflectionsButton) refreshAdminReflectionsButton.addEventListener("click", function () { loadAdminReflections(true); });
   document.getElementById("teacher-app").addEventListener("click", function (event) {
     var observationCard = event.target.closest("[data-admin-observation]");
     var guideCard = event.target.closest("[data-admin-guide]");
